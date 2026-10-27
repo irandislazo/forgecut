@@ -23,6 +23,8 @@ permissions:
 env:
   PYTHON_VERSION: "3.12"
   FLET_VERSION: "0.86.0"
+  PYTHONUTF8: "1"                 # evita UnicodeEncodeError (cp1252) de rich/flet en el runner de Windows
+  PYTHONIOENCODING: "utf-8"
 
 jobs:
   tests:
