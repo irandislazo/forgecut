@@ -44,6 +44,17 @@ class TestPackaging(unittest.TestCase):
             shutil.which = old_which
             os.environ.clear(); os.environ.update(old_env)
 
+    def test_android_native_lib_dir_is_found_from_proc_maps(self):
+        from forgecut.media.ffmpeg_backend import _android_lib_dirs
+        maps = ("7f1 r-xp 0 00:00 1 /data/app/~~abc==/com.forgecut.forgecut-xyz==/lib/arm64/libpythonbundle.so\n"
+                "7f2 r--p 0 00:00 1 /data/app/~~abc==/com.forgecut.forgecut-xyz==/lib/arm64/libflutter.so\n"
+                "7f3 r--p 0 00:00 1 /system/lib64/libc.so\n")
+        self.assertEqual(_android_lib_dirs(maps), ["/data/app/~~abc==/com.forgecut.forgecut-xyz==/lib/arm64"])
+
+    def test_android_ffmpeg_scripts_and_workflow_exist(self):
+        for f in ("scripts/android/build_ffmpeg.sh", "scripts/android/inject_ffmpeg.sh", ".github/workflows/android-ffmpeg.yml"):
+            self.assertTrue(os.path.exists(os.path.join(ROOT, f)), f)
+
     def test_app_data_dir_uses_flet_storage_on_mobile(self):
         from forgecut.ui.state import default_data_dir
         d = tempfile.mkdtemp()

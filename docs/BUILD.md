@@ -59,3 +59,7 @@ Cuando exista un `libffmpeg.so` ejecutable dentro del APK, `_find()` en `media/f
 - Abre el job fallido → mira el paso **Compilar APK / Compilar Windows** (corre con `--verbose`).
 - *Windows local:* casi siempre falta «Desarrollo para el escritorio con C++» o el Modo desarrollador.
 - Los flags `--split-per-abi`, `--build-number`, `--build-version` y los de firma son de `flet build`; si tu versión de Flet los renombrara, quítalos del paso y vuelve a lanzar.
+
+## 5. Android con ffmpeg incluido (workflow aparte)
+**Actions → «Android con ffmpeg incluido» → Run workflow.** Compila ffmpeg (x264 + mp3lame) con el NDK, compila el APK con Flet y le añade `lib/arm64-v8a/libffmpeg.so`; resultado: artefacto `forgecut-android-arm64-ffmpeg` (`ForgeCut-android-arm64-ffmpeg.apk`, para móviles arm64). La 1.ª ejecución tarda ~20–30 min (ffmpeg se cachea). `build.yml` no cambia.
+En el paso «Inyectar ffmpeg y firmar» verás `libffmpeg.so` listado y el valor de `extractNativeLibs`. En el móvil, la barra superior deja de mostrar «sin ffmpeg».

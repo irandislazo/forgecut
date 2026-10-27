@@ -62,8 +62,21 @@ class Inspector:
                 st["v"] = v
                 on_apply(v)
 
-        sl.on_change = lambda e: show(float(e.control.value))
-        sl.on_change_end = lambda e: apply(float(e.control.value))
+        field = {"Zoom": "scale", "Posición X (px)": "x", "Posición Y (px)": "y", "Rotación °": "rotation",
+                 "Opacidad": "opacity"}.get(label)
+        cid = getattr(self, "_cid", None)
+
+        def on_change(e):
+            v = float(e.control.value)
+            show(v)
+            if field and cid:
+                self.s.set_live(cid, field, v)               # el visor se mueve mientras arrastras (como DaVinci)
+
+        def on_end(e):
+            apply(float(e.control.value))
+            if field and cid:
+                self.s.clear_live(cid)
+        sl.on_change, sl.on_change_end = on_change, on_end
         head = [lab, ft.Container(expand=True)]
         if default is not None:
             head.append(icon_btn("RESTART_ALT", lambda e: apply(default), "Restablecer", 14, T.TEXT_DIM))
@@ -94,6 +107,7 @@ class Inspector:
 
     def _clip_panel(self, c):
         s = self.s
+        self._cid = c.id
         sp = lambda **kw: s.set_props(c.id, **kw)
         t = c.transform
         fps = float(s.tl.fps)

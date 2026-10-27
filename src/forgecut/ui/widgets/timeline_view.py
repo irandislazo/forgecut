@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import time
 
+import asyncio
+
 import flet as ft
 
 from ...core import editing as ed
@@ -23,6 +25,7 @@ TRACK_H = 48
 RULER_H = 28
 HEADER_W = 92
 HANDLE_W = 7
+HANDLE_TOUCH = 30            # borde grande en el modo «Recortar» (táctil)
 KIND_COLOR = {"video": "#3b6ea5", "audio": "#4b3b86", "image": "#2f8f6f", "placeholder": "#a33a3a"}
 SNAP_COLOR = "#ffd60a"
 MAX_STRIP_PX = 40000          # por encima se omite la imagen del clip (zoom enorme) y queda el color liso
@@ -52,6 +55,7 @@ class _Ref:
 
 class TimelineView:
     ASYNC_DROP = True
+    viewport_w = 0.0              # ancho visible del timeline (lo fija el Workspace)
 
     def __init__(self, state):
         self.s = state
@@ -60,6 +64,7 @@ class TimelineView:
         # El DragTarget envuelve al Stack en vez de ser una capa superpuesta: una capa encima del timeline
         # intercepta los clics/arrastres y ningún clip ni la cuchilla recibían eventos.
         self.dropzone = ft.DragTarget(group="media", content=self.stack, on_accept=quiet(self._drop))
+        self._auto = None
         self.scroller = ft.Row([self.dropzone], scroll=ft.ScrollMode.AUTO, expand=True,
                                vertical_alignment=ft.CrossAxisAlignment.START,
                                on_scroll=quiet(self._on_scroll), scroll_interval=80)
@@ -361,7 +366,7 @@ class TimelineView:
         if asset is not None and vis is None:
             s.ensure_visuals(asset.id)                  # plantillas / proyectos abiertos: genera miniaturas/onda al vuelo
         sig = (c.start, c.duration, c.source_in, c.speed, c.name, c.color, c.enabled, c.kind, row, z, tr.locked,
-               vis[0] if vis else None, asset.duration_s if asset else 0)
+               vis[0] if vis else None, asset.duration_s if asset else 0, s.edit_mode)
         ref = self._refs.get(c.id)
         if ref and ref.sig == sig:
             return ref.group
@@ -387,10 +392,17 @@ class TimelineView:
             mouse_cursor=_cursor("MOVE"),
             on_tap_down=lambda e, i=cid: self._clip_tap(i),
             on_tap=lambda e, i=cid: self._clip_click(i),
-            on_pan_start=lambda e, i=cid: self._drag_start(i),
-            on_pan_update=self._drag_update, on_pan_end=self._drag_end)
-        group.controls = [main] + ([self._handle(cid, "start", c, w, h, x), self._handle(cid, "end", c, w, h, x)]
-                                   if w > 24 and not tr.locked else [])
+            on_pan_start=None if s.edit_mode == "trim" else (lambda e, i=cid: self._drag_start(i)),
+            on_pan_update=None if s.edit_mode == "trim" else self._drag_update,
+            on_pan_end=None if s.edit_mode == "trim" else self._drag_end)
+        if s.edit_mode == "move":                          # modo Mover: todo el clip es para arrastrar (sin bordes)
+            hs = []
+        elif s.edit_mode == "trim":                        # modo Recortar: bordes grandes y visibles
+            hw = max(8.0, min(float(HANDLE_TOUCH), (w - 2) / 2))
+            hs = [] if tr.locked else [self._handle(cid, "start", c, w, h, x, hw, 0.7), self._handle(cid, "end", c, w, h, x, hw, 0.7)]
+        else:
+            hs = [self._handle(cid, "start", c, w, h, x), self._handle(cid, "end", c, w, h, x)] if w > 24 and not tr.locked else []
+        group.controls = [main] + hs
         self._refs[cid] = _Ref(group, outline, sig)
         return group
 
@@ -417,6 +429,11 @@ class TimelineView:
         ids = list(s.selection) if cid in s.selection else [cid]
         self._drag = {"ids": ids, "dx": 0.0, "dy": 0.0,
                       "base": {i: (self._refs[i].group.left, self._refs[i].group.top) for i in ids if i in self._refs}}
+        if self._auto is not None:
+            self._auto["on"] = False
+        import threading
+        self._auto = {"on": True, "rate": 0.0}
+        threading.Thread(target=self._auto_loop, args=(self._auto,), daemon=True).start()
 
     def _drag_update(self, e) -> None:
         d = self._drag
@@ -427,13 +444,63 @@ class TimelineView:
         d["dy"] += evt_dy(e)
         if not self._tick("drag"):
             return
+        self._apply_drag(d)
+
+    def _apply_drag(self, d) -> None:
+        s, z = self.s, self.s.zoom
         frames, snap = s.drag_preview(d["ids"], round(d["dx"] / z))
         rowd = self._clamp_rows(d["ids"], round(d["dy"] / TRACK_H))
+        lo, hi = 1e12, 0.0
         for i in d["base"]:
             g = self._refs[i].group
             g.left, g.top = d["base"][i][0] + frames * z, d["base"][i][1] + rowd * TRACK_H
+            lo, hi = min(lo, g.left), max(hi, g.left + (g.width or 0))
+        if hi + 600 > (self.stack.width or 0):               # el timeline crece para poder seguir hacia la derecha
+            self.stack.width = hi + 600
+            safe_update(self.stack)
+        if self._auto is not None:
+            self._auto["rate"] = self._edge_rate(lo, hi)
         self._show_guide(snap)
         safe_update(*[self._refs[i].group for i in d["base"]], self._guide)
+
+    # ── desplazamiento automático al arrastrar cerca de los bordes (como DaVinci) ──
+    def _edge_rate(self, left: float, right: float) -> float:
+        sx, vp = self._view[0], (self._view[1] or self.viewport_w)
+        if vp <= 0:
+            return 0.0
+        m = 70.0
+        if right > sx + vp - m:
+            return min(45.0, 6.0 + (right - (sx + vp - m)) / 3.0)
+        if left < sx + m and sx > 0:
+            return -min(45.0, 6.0 + ((sx + m) - left) / 3.0)
+        return 0.0
+
+    def _scroll_by(self, px: float) -> None:
+        new = max(0.0, self._view[0] + px)
+        try:
+            res = self.scroller.scroll_to(offset=new, duration=0)
+            if asyncio.iscoroutine(res):
+                asyncio.get_event_loop().create_task(res)
+        except Exception:
+            return
+        self._view = (new, self._view[1])
+
+    def _auto_loop(self, auto) -> None:
+        import time
+        disp = getattr(self.s, "dispatch", None) or (lambda f: f())
+
+        def tick():
+            d, r = self._drag, auto["rate"]
+            if not d or not auto["on"] or not r:
+                return
+            before = self._view[0]
+            self._scroll_by(r)
+            d["dx"] += self._view[0] - before
+            self._apply_drag(d)
+        while auto["on"]:
+            time.sleep(0.04)
+            if auto["rate"]:
+                disp(tick)
 
     def _clamp_rows(self, ids, rowd: int) -> int:
         rows = self.rows()
@@ -453,6 +520,9 @@ class TimelineView:
     def _drag_end(self, e) -> None:
         d, self._drag = self._drag, None
         self._guide.visible = False
+        if self._auto is not None:
+            self._auto["on"] = False
+            self._auto = None
         if not d:
             return
         z = self.s.zoom
@@ -465,7 +535,7 @@ class TimelineView:
             self.refresh()
 
     # ── recorte por bordes con imán ────────────────────────────────
-    def _handle(self, cid: str, edge: str, c, w: float, h: float, x: float):
+    def _handle(self, cid: str, edge: str, c, w: float, h: float, x: float, hw: float = HANDLE_W, op: float = 0.35):
         hs = {"dx": 0.0, "base": c.start if edge == "start" else c.end}
 
         def upd(e):
@@ -497,6 +567,6 @@ class TimelineView:
             if self._refreshes == before:
                 self.refresh()
         return _gd(
-            content=ft.Container(bgcolor="#ffffff", opacity=0.35, width=HANDLE_W, height=h),
-            left=0 if edge == "start" else w + 2 - HANDLE_W, top=1, width=HANDLE_W, height=h, drag_interval=24,
+            content=ft.Container(bgcolor="#ffffff", opacity=op, width=hw, height=h),
+            left=0 if edge == "start" else w + 2 - hw, top=1, width=hw, height=h, drag_interval=24,
             mouse_cursor=_cursor("RESIZE_LEFT_RIGHT"), on_horizontal_drag_update=upd, on_horizontal_drag_end=end)

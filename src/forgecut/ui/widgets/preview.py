@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import dataclasses
+import math
 import os
 import tempfile
 import time
@@ -18,7 +20,7 @@ import flet as ft
 from ...core import editing as ed
 from ...media.audio_play import AudioPlayer, build_audio_mix
 from .. import theme as T
-from ..compat import icon_btn, make_image, run_bg, safe_update, set_image_bytes, text, ui_call
+from ..compat import hard_clip, icon_btn, make_image, run_bg, safe_update, set_image_bytes, text, ui_call
 
 PREVIEW_W = 560
 
@@ -60,6 +62,8 @@ class Preview:
         self._anext = None                      # siguiente tramo ya mezclado: (ruta|None, frame_fin)
         self._acount = 0
         self._img = None                        # imagen persistente de la reproducción
+        self._xsig = None                       # firma de la transformación del envoltorio actual
+        self._clip_now = None
         state.subscribe(self._on_state)
         self.show(state.playhead)
 
@@ -76,6 +80,9 @@ class Preview:
         self.show(self.s.playhead)
 
     def _on_state(self, kind: str) -> None:
+        if kind == "live" and not self.playing:
+            self.show(self.s.playhead)
+            return
         if self.playing and kind == "playhead":      # durante la reproducción pinta _loop (evita doble trabajo)
             return
         if kind in ("playhead", "timeline", "all"):
@@ -84,7 +91,30 @@ class Preview:
             self.show(self.s.playhead)
 
     # ── dibujo ─────────────────────────────────────────────────────
+    def _xf(self, clip):
+        tr = clip.transform
+        ov = self.s.live_props.get(clip.id)
+        return dataclasses.replace(tr, **ov) if ov else tr
+
+    def _wrap(self, ctl, clip):
+        """Aplica la transformación del clip (posición, zoom, rotación, opacidad, volteo) a la imagen del visor."""
+        if ctl is None or clip is None or clip.kind == "placeholder":
+            return ctl
+        tr = self._xf(clip)
+        if (abs(tr.scale - 1) < 1e-6 and not tr.x and not tr.y and not tr.rotation and tr.opacity >= 0.999
+                and not tr.flip_h and not tr.flip_v):
+            return ctl
+        k = self.w / max(1, self.s.tl.width)
+        try:
+            scale = ft.Scale(scale_x=-tr.scale if tr.flip_h else tr.scale, scale_y=-tr.scale if tr.flip_v else tr.scale)
+        except Exception:
+            scale = tr.scale
+        inner = ft.Container(content=ctl, left=tr.x * k, top=tr.y * k, width=self.w, height=self.h, scale=scale,
+                             rotate=math.radians(tr.rotation), opacity=tr.opacity)
+        return ft.Container(content=ft.Stack([inner], width=self.w, height=self.h), width=self.w, height=self.h, **hard_clip())
+
     def show(self, frame: int) -> None:
+        self._xsig, self._clip_now = None, None
         tl = self.s.tl
         self.tc.value = f"{tl.timecode(frame)}   /   {tl.timecode(tl.duration)}"
         clip = ed.top_video_clip_at(tl, frame)
@@ -97,12 +127,13 @@ class Preview:
                 [text(clip.name or "HUECO", 22, "#ffffff", bold=True), text("Hueco de lipsync", 12, T.TEXT_DIM)],
                 alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER))
         else:
+            self._clip_now = clip
             asset = self.s.project.assets.get(clip.asset_id)
             if asset is not None:
                 src_f = clip.source_in + int(round((frame - clip.start) * clip.speed))
                 key = (asset.path, src_f)
                 if key in self._cache:
-                    self.holder.content = self._cache[key]
+                    self.holder.content = self._wrap(self._cache[key], clip)
                 else:
                     self._request(asset.path, src_f / tl.fps, key, token)
         safe_update(self.holder, self.tc)
@@ -142,7 +173,7 @@ class Preview:
 
     def _apply(self, token: int, ctl) -> None:
         if ctl is not None and token == self._token:           # descarta respuestas viejas
-            self.holder.content = ctl
+            self.holder.content = self._wrap(ctl, self._clip_now)
             safe_update(self.holder)
 
     # ── reproducción ───────────────────────────────────────────────
@@ -258,7 +289,9 @@ class Preview:
         else:
             set_image_bytes(self._img, jpeg)
         self._img.width, self._img.height = self.w, self.h
-        if self.holder.content is not self._img:         # solo se toca el contenedor al cambiar de control
-            self.holder.content = self._img
+        sig = (clip.id, dataclasses.astuple(self._xf(clip)))
+        if self.holder.content is None or sig != self._xsig:     # solo se toca el contenedor al cambiar de control/transformación
+            self._xsig = sig
+            self.holder.content = self._wrap(self._img, clip)
             safe_update(self.holder)
         safe_update(self._img, self.tc)

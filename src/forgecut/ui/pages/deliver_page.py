@@ -27,6 +27,8 @@ class DeliverPage:
         self.res_info = text("", 11, T.TEXT_DIM)
         self.out_dir = ft.TextField(label="Carpeta de salida (audio)", dense=True, width=300, text_size=12,
                                     value=os.path.join(state.data_dir, "export_audio"))
+        self.render_dir = ft.TextField(label="Carpeta de salida (vídeo)", dense=True, width=300, text_size=12,
+                                       value=os.path.join(state.data_dir, "render"))
         self.info = text("", 12, T.TEXT_DIM)
         self.audio_msg = text("", 12, T.TEXT_DIM)
         self.bar = ft.ProgressBar(value=0, visible=False)
@@ -42,7 +44,9 @@ class DeliverPage:
                  self.info, ft.Row([btn("Exportar audio", lambda e: self.page.run_task(self.export_audio), "AUDIO_FILE", primary=True),
                                     self.audio_msg], spacing=10, wrap=True)),
             card("🎞️ Renderizar vídeo", text("Resolución (lado corto; respeta la orientación del proyecto)", 11, T.TEXT_DIM),
-                 self.res.control, text("Calidad", 11, T.TEXT_DIM), self.crf.control, self.res_info, self.bar,
+                 self.res.control, text("Calidad", 11, T.TEXT_DIM), self.crf.control, self.res_info,
+                 ft.Row([self.render_dir, btn("Elegir…", lambda e: self.page.run_task(self.choose_render_dir), "FOLDER_OPEN")], spacing=8, wrap=True),
+                 self.bar,
                  ft.Row([btn("Renderizar MP4", lambda e: self.page.run_task(self.render), "MOVIE", primary=True), self.render_msg],
                         spacing=10, wrap=True)),
         ], spacing=14, scroll=ft.ScrollMode.AUTO))
@@ -71,6 +75,12 @@ class DeliverPage:
             self.out_dir.value = d
             safe_update(self.out_dir)
 
+    async def choose_render_dir(self) -> None:
+        d = await pick_dir(self.page, "Carpeta donde guardar el vídeo")
+        if d:
+            self.render_dir.value = d
+            safe_update(self.render_dir)
+
     async def export_audio(self) -> None:
         only_sel = self.scope.value == "sel"
         self.audio_msg.value = "Exportando…"
@@ -87,7 +97,13 @@ class DeliverPage:
             toast(self.page, "El timeline está vacío.")
             return
         default = os.path.join(self.s.data_dir, "render", f"{self.s.project.name}.mp4")
-        out = await pick_save(self.page, "Guardar vídeo", f"{self.s.project.name}_{self.res.value}p.mp4" if self.res.value.isdigit() else f"{self.s.project.name}.mp4", "mp4") or default
+        fname = f"{self.s.project.name}_{self.res.value}p.mp4" if self.res.value.isdigit() else f"{self.s.project.name}.mp4"
+        folder = (self.render_dir.value or "").strip()
+        if folder:                                            # carpeta elegida: sin diálogo de «guardar como»
+            os.makedirs(folder, exist_ok=True)
+            out = os.path.join(folder, fname)
+        else:
+            out = await pick_save(self.page, "Guardar vídeo", fname, "mp4") or default
         self.bar.visible, self.bar.value = True, 0
         self.render_msg.value = "Renderizando…"
         safe_update(self.bar, self.render_msg)

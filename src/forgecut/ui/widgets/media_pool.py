@@ -58,13 +58,15 @@ class MediaPool:
         self.status = text("", 11, T.TEXT_DIM)
         self.crumb = text("", 11, T.TEXT_DIM, visible=False)      # texto plano (ruta), útil para accesibilidad/pruebas
         self.crumbs_row = ft.Row([], wrap=True, spacing=2, run_spacing=2)
+        self.all_btn = icon_btn("SELECT_ALL", self._select_all, "Seleccionar todo lo visible", 18, T.TEXT_DIM)
+        self.none_btn = icon_btn("DESELECT", lambda e: self.s.pool_clear(), "Deseleccionar todo", 18, T.TEXT_DIM)
         self.view_btn = icon_btn("GRID_VIEW", self._toggle_view, "Vista de miniaturas / lista", 18, T.TEXT_DIM)
         self.multi_btn = icon_btn("CHECKLIST", self._toggle_multi, "Modo selección: cada toque suma o quita", 18, T.TEXT_DIM)
         self.sort_btn = icon_btn("SORT", self._cycle_sort, "Ordenar", 18, T.TEXT_DIM)
         self.search = ft.TextField(hint_text="Buscar en todo el Media Pool…", dense=True, text_size=12, expand=True,
                                    on_change=self._on_search)
         self.selbar = ft.Container(visible=False, bgcolor=T.PANEL_3, padding=6, border_radius=4)
-        header = ft.Row([text("Media Pool", 14, bold=True), ft.Container(expand=True), self.view_btn, self.multi_btn,
+        header = ft.Row([text("Media Pool", 14, bold=True), ft.Container(expand=True), self.all_btn, self.none_btn, self.view_btn, self.multi_btn,
                          self.sort_btn], spacing=2)
         actions = ft.Row([btn("Carpeta", lambda e: self.page.run_task(self.new_folder), "CREATE_NEW_FOLDER"),
                           btn("Importar", self.on_import, "ADD")], wrap=True, spacing=6)       # sin expand: seguro
@@ -188,6 +190,10 @@ class MediaPool:
                 toast(self.page, f"{len(done)} medio(s) quitado(s) del Media Pool.")
 
     # ── selección ──────────────────────────────────────────────────
+    def _select_all(self, e=None) -> None:
+        bins, assets = self.s.pool_items(self.cur)
+        self.s.pool_select_all([b.id for b in bins] + [a.id for a in assets])
+
     def _toggle_view(self, e=None) -> None:
         self.s.pool_view = "list" if self.s.pool_view == "grid" else "grid"
         self.refresh()

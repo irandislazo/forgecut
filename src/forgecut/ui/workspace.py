@@ -20,6 +20,8 @@ class Toolbar:
         self.thr = ft.TextField(value="0.30", width=60, dense=True, text_size=12, tooltip="Sensibilidad de escenas (0.1–0.9)")
         self.zoom = ft.Slider(min=0.05, max=6.0, value=state.zoom, width=140, on_change=lambda e: state.set_zoom(float(e.control.value)))
         self.tool_btns = {}
+        self.mode = Choice([("auto", "Auto"), ("move", "✥ Mover"), ("trim", "↔ Recortar")], "auto",
+                           on_change=lambda k: state.set_edit_mode(k))      # botones táctiles (Android)
         self.fmt = Choice([("mp3", "MP3"), ("wav", "WAV")], "mp3")
         self.row = ft.Row(spacing=0, vertical_alignment=ft.CrossAxisAlignment.CENTER, wrap=False)
         self.root = ft.Container(content=ft.Row([self.row], scroll=ft.ScrollMode.AUTO), bgcolor=T.PANEL_2, padding=4)
@@ -50,7 +52,8 @@ class Toolbar:
             ft.Container(width=10),
             btn("Exportar audio selección", self._export_audio, "AUDIOTRACK",
                 tooltip="Guarda como archivo de audio el tramo de cada clip seleccionado (Ctrl+clic o marquesina para varios)"),
-            self.fmt.control]
+            self.fmt.control,
+            ft.Container(width=10), self.mode.control]
         safe_update(self.row)
 
     def _toggle_multi(self, e) -> None:
@@ -138,6 +141,7 @@ class Workspace:
             self.compact = compact
             self._set_switch("pool" if (compact and self.page_name == "media") else "preview")
         self.preview.resize(min(560, int(w) - 24) if compact else 560)
+        self.timeline.viewport_w = max(0.0, float(w) - 100.0)
         self._layout()
 
     def _layout(self) -> None:

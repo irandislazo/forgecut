@@ -16,6 +16,17 @@ AUDIO_EXT = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".opus"}
 _NOWIN = {"creationflags": 0x08000000} if sys.platform.startswith("win") else {}   # sin ventana negra
 
 
+def _android_lib_dirs(maps_text: Optional[str] = None) -> List[str]:
+    """Carpeta de librerías nativas de la app en Android, deducida de /proc/self/maps (las .so cargadas viven en
+    /data/app/…/lib/<abi>/). Es el único sitio desde el que Android permite ejecutar un binario (libffmpeg.so)."""
+    import re
+    try:
+        txt = maps_text if maps_text is not None else open("/proc/self/maps").read()
+    except OSError:
+        return []
+    return list(dict.fromkeys(re.findall(r"(/data/(?:app|data)/[^\s]*?/lib/[^/\s]+)/[^/\s]+\.so", txt)))
+
+
 def _extra_dirs() -> List[str]:
     """Dónde buscar ffmpeg/ffprobe además del PATH: junto al ejecutable empaquetado (Windows/Linux/macOS), en una
     carpeta propia de ForgeCut y, en Android, en las librerías nativas de la app (el único sitio ejecutable)."""
@@ -33,7 +44,7 @@ def _extra_dirs() -> List[str]:
         dirs.append(os.path.join(local, "ForgeCut", "ffmpeg"))
     if "ANDROID_ROOT" in os.environ or os.path.isdir("/data/app"):
         import glob
-        dirs += glob.glob("/data/app/*/*/lib/*") + glob.glob("/data/app/*/lib/*")
+        dirs += _android_lib_dirs() + glob.glob("/data/app/*/*/lib/*") + glob.glob("/data/app/*/lib/*")
         nl = os.environ.get("ANDROID_NATIVE_LIB_DIR")
         if nl:
             dirs.append(nl)

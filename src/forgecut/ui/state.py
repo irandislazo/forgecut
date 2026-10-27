@@ -59,6 +59,8 @@ class AppState:
         self._vis_pool = None
         self._vis_timer = None
         # Media Pool (selección múltiple de medios y carpetas, búsqueda, vista)
+        self.edit_mode = "auto"               # auto | move | trim  (botones táctiles del timeline)
+        self.live_props: dict = {}            # {clip_id: {campo_transform: valor}} mientras se arrastra un deslizable
         self.pool_sel: List[str] = []         # ids de medios («m…») y carpetas («b…») seleccionados
         self.pool_anchor: Optional[str] = None   # ancla para Shift+clic (rango)
         self.pool_multi = False               # botón «Seleccionar»: cada toque suma/quita (táctil / sin Ctrl)
@@ -150,6 +152,19 @@ class AppState:
     def set_tool(self, tool: str) -> None:
         self.tool = tool
         self.notify("tool")
+
+    def set_edit_mode(self, mode: str) -> None:
+        self.edit_mode = mode if mode in ("auto", "move", "trim") else "auto"
+        self.notify("tool")
+
+    def set_live(self, clip_id: str, field: str, value: float) -> None:
+        """Valor provisional de la transformación (deslizable en movimiento): el visor lo muestra al instante."""
+        self.live_props.setdefault(clip_id, {})[field] = float(value)
+        self.notify("live")
+
+    def clear_live(self, clip_id: str) -> None:
+        if self.live_props.pop(clip_id, None) is not None:
+            self.notify("live")
 
     def set_zoom(self, zoom: float) -> None:
         self.zoom = max(0.05, min(float(zoom), 12.0))
