@@ -1,0 +1,64 @@
+name: Android con ffmpeg incluido
+
+# Workflow APARTE y manual: no toca build.yml. Compila ffmpeg para Android (se cachea), compila el APK con Flet
+# y le inyecta libffmpeg.so. Resultado: ForgeCut-android-arm64-ffmpeg.apk
+on:
+  workflow_dispatch: {}
+
+env:
+  PYTHON_VERSION: "3.12"
+  FLET_VERSION: "0.86.0"
+  PYTHONUTF8: "1"
+
+jobs:
+  ffmpeg:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - id: cache
+        uses: actions/cache@v4
+        with:
+          path: out/libffmpeg.so
+          key: ffmpeg-android-arm64-n7.1-x264-lame-v1
+      - if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update && sudo apt-get install -y nasm pkg-config make
+          bash scripts/android/build_ffmpeg.sh
+      - uses: actions/upload-artifact@v4
+        with: { name: libffmpeg-arm64, path: out/libffmpeg.so }
+
+  apk:
+    needs: ffmpeg
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "${{ env.PYTHON_VERSION }}" }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "17" }
+      - uses: actions/cache@v4
+        with: { path: ~/flutter, key: "flutter-${{ runner.os }}-${{ env.FLET_VERSION }}" }
+      - uses: actions/download-artifact@v4
+        with: { name: libffmpeg-arm64, path: ffmpeg_in }
+      - run: pip install "flet==${{ env.FLET_VERSION }}"
+      - run: flet build apk --yes --split-per-abi --build-number ${{ github.run_number }} --verbose
+      - name: Inyectar ffmpeg y firmar
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KS_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          if [ -n "$KS_B64" ]; then
+            echo "$KS_B64" | base64 -d > ks.jks; ALIAS="$KS_ALIAS"; PASS="$KS_PASS"
+          else
+            keytool -genkeypair -keystore ks.jks -storepass android -keypass android -alias forgecut \
+              -dname "CN=ForgeCut" -keyalg RSA -keysize 2048 -validity 10000
+            ALIAS=forgecut; PASS=android
+          fi
+          APK="$(ls build/apk/*arm64-v8a*.apk | head -1)"
+          cp "$APK" ForgeCut-android-arm64-ffmpeg.apk
+          bash scripts/android/inject_ffmpeg.sh ForgeCut-android-arm64-ffmpeg.apk ffmpeg_in/libffmpeg.so ks.jks "$ALIAS" "$PASS"
+      - uses: actions/upload-artifact@v4
+        with: { name: forgecut-android-arm64-ffmpeg, path: ForgeCut-android-arm64-ffmpeg.apk }
