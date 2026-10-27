@@ -1,0 +1,153 @@
+name: Build ForgeCut
+
+# Cómo se lanza:
+#   · Subir una etiqueta  →  git tag v0.2.0 && git push origin v0.2.0   (compila Android + Windows y crea una Release)
+#   · A mano: pestaña Actions → «Build ForgeCut» → Run workflow (puedes elegir qué plataformas)
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      android: { description: "Compilar Android (APK)", type: boolean, default: true }
+      windows: { description: "Compilar Windows", type: boolean, default: true }
+      linux:   { description: "Compilar Linux", type: boolean, default: false }
+      macos:   { description: "Compilar macOS", type: boolean, default: false }
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write            # necesario para publicar la Release con los archivos
+
+env:
+  PYTHON_VERSION: "3.12"
+  FLET_VERSION: "0.86.0"
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    continue-on-error: true      # un test fallido avisa pero NO bloquea la compilación del APK/Windows
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "${{ env.PYTHON_VERSION }}" }
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: python -m unittest discover -s tests -p "test_*.py" -v
+
+  android:
+    needs: tests
+    if: ${{ github.event_name == 'push' || inputs.android }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "${{ env.PYTHON_VERSION }}" }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "17" }
+      - name: Caché de Flutter (la descarga de Flet es lo más lento)
+        uses: actions/cache@v4
+        with:
+          path: ~/flutter
+          key: flutter-${{ runner.os }}-${{ env.FLET_VERSION }}
+      - run: pip install "flet==${{ env.FLET_VERSION }}"
+      # Firma de release OPCIONAL. Sin secretos, Flet firma con la clave de depuración: el APK se instala igual (sideload).
+      - name: Preparar keystore (si hay secretos)
+        id: ks
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KS_B64" ]; then
+            echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/forgecut.jks"
+            echo "path=$RUNNER_TEMP/forgecut.jks" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Compilar APK
+        env:
+          FLET_ANDROID_SIGNING_KEY_STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          FLET_ANDROID_SIGNING_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"; [ "$GITHUB_REF_TYPE" = "tag" ] || VERSION="0.0.0"
+          ARGS="--split-per-abi --build-number ${{ github.run_number }} --build-version ${VERSION} --verbose"
+          if [ -n "${{ steps.ks.outputs.path }}" ]; then
+            ARGS="$ARGS --android-signing-key-store ${{ steps.ks.outputs.path }} --android-signing-key-alias ${{ secrets.ANDROID_KEY_ALIAS }}"
+          fi
+          flet build apk $ARGS
+      - run: ls -la build/apk
+      - uses: actions/upload-artifact@v4
+        with: { name: forgecut-android-apk, path: build/apk }
+
+  windows:
+    needs: tests
+    if: ${{ github.event_name == 'push' || inputs.windows }}
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "${{ env.PYTHON_VERSION }}" }
+      - run: pip install "flet==${{ env.FLET_VERSION }}"
+      - name: Compilar Windows
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"; [ "$GITHUB_REF_TYPE" = "tag" ] || VERSION="0.0.0"
+          flet build windows --build-number ${{ github.run_number }} --build-version "$VERSION" --verbose
+      - name: Añadir ffmpeg junto al ejecutable (vista previa, miniaturas, exportación)
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip" -OutFile ffmpeg.zip
+          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg_tmp
+          $bin = Get-ChildItem ffmpeg_tmp -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+          Copy-Item $bin.FullName build/windows/ffmpeg.exe
+          Copy-Item (Join-Path $bin.DirectoryName "ffprobe.exe") build/windows/ffprobe.exe
+      - name: Comprimir
+        shell: pwsh
+        run: Compress-Archive -Path build/windows/* -DestinationPath ForgeCut-windows.zip
+      - uses: actions/upload-artifact@v4
+        with: { name: forgecut-windows, path: ForgeCut-windows.zip }
+
+  linux:
+    needs: tests
+    if: ${{ inputs.linux }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "${{ env.PYTHON_VERSION }}" }
+      - run: sudo apt-get update && sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev
+      - run: pip install "flet==${{ env.FLET_VERSION }}"
+      - run: flet build linux --verbose
+      - uses: actions/upload-artifact@v4
+        with: { name: forgecut-linux, path: build/linux }
+
+  macos:
+    needs: tests
+    if: ${{ inputs.macos }}
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "${{ env.PYTHON_VERSION }}" }
+      - run: pip install "flet==${{ env.FLET_VERSION }}"
+      - run: flet build macos --verbose
+      - uses: actions/upload-artifact@v4
+        with: { name: forgecut-macos, path: build/macos }
+
+  release:
+    needs: [android, windows]
+    if: ${{ github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: dist }
+      - name: Renombrar APKs
+        run: |
+          cd dist/forgecut-android-apk
+          for f in *.apk; do mv "$f" "ForgeCut-${GITHUB_REF_NAME}-${f}"; done
+          ls -la
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/forgecut-android-apk/*.apk
+            dist/forgecut-windows/ForgeCut-windows.zip
