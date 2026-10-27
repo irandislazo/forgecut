@@ -1,0 +1,25 @@
+[project]
+name = "forgecut"
+version = "0.2.0"
+description = "Editor de vídeo estilo DaVinci con timeline automático por plantillas (Python + Flet)"
+requires-python = ">=3.10"
+dependencies = ["flet==0.86.0"]
+
+[project.optional-dependencies]
+dev = ["imageio-ffmpeg"]   # ffmpeg embebido para escritorio si no lo tienes instalado
+
+[tool.flet]
+product = "ForgeCut"
+org = "com.forgecut"
+company = "ForgeCut"
+copyright = "ForgeCut"
+
+[tool.flet.app]
+path = "src"
+
+[tool.flet.android.permission]
+"android.permission.READ_EXTERNAL_STORAGE" = true
+"android.permission.WRITE_EXTERNAL_STORAGE" = true
+"android.permission.READ_MEDIA_VIDEO" = true
+"android.permission.READ_MEDIA_AUDIO" = true
+"android.permission.READ_MEDIA_IMAGES" = true
