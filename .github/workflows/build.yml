@@ -68,7 +68,7 @@ jobs:
           FLET_ANDROID_SIGNING_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           VERSION="${GITHUB_REF_NAME#v}"; [ "$GITHUB_REF_TYPE" = "tag" ] || VERSION="0.0.0"
-          ARGS="--split-per-abi --build-number ${{ github.run_number }} --build-version ${VERSION} --verbose"
+          ARGS="--yes --split-per-abi --build-number ${{ github.run_number }} --build-version ${VERSION} --verbose"
           if [ -n "${{ steps.ks.outputs.path }}" ]; then
             ARGS="$ARGS --android-signing-key-store ${{ steps.ks.outputs.path }} --android-signing-key-alias ${{ secrets.ANDROID_KEY_ALIAS }}"
           fi
@@ -91,7 +91,7 @@ jobs:
         shell: bash
         run: |
           VERSION="${GITHUB_REF_NAME#v}"; [ "$GITHUB_REF_TYPE" = "tag" ] || VERSION="0.0.0"
-          flet build windows --build-number ${{ github.run_number }} --build-version "$VERSION" --verbose
+          flet build windows --yes --build-number ${{ github.run_number }} --build-version "$VERSION" --verbose
       - name: Añadir ffmpeg junto al ejecutable (vista previa, miniaturas, exportación)
         shell: pwsh
         run: |
@@ -116,7 +116,7 @@ jobs:
         with: { python-version: "${{ env.PYTHON_VERSION }}" }
       - run: sudo apt-get update && sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev
       - run: pip install "flet==${{ env.FLET_VERSION }}"
-      - run: flet build linux --verbose
+      - run: flet build linux --yes --verbose
       - uses: actions/upload-artifact@v4
         with: { name: forgecut-linux, path: build/linux }
 
@@ -129,7 +129,7 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "${{ env.PYTHON_VERSION }}" }
       - run: pip install "flet==${{ env.FLET_VERSION }}"
-      - run: flet build macos --verbose
+      - run: flet build macos --yes --verbose
       - uses: actions/upload-artifact@v4
         with: { name: forgecut-macos, path: build/macos }
 
