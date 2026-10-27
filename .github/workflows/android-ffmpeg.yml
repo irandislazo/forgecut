@@ -44,7 +44,33 @@ jobs:
         with: { name: libffmpeg-arm64, path: ffmpeg_in }
       - run: pip install "flet==${{ env.FLET_VERSION }}"
       - run: flet build apk --yes --split-per-abi --build-number ${{ github.run_number }} --verbose
-      - name: Inyectar ffmpeg y firmar
+      - name: Reempaquetar con ffmpeg (libs extraíbles) - método principal
+        id: repack
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          P=build/flutter
+          FL="$(ls -d "$HOME"/flutter/*/bin/flutter | head -1)"
+          mkdir -p "$P/android/app/src/main/jniLibs/arm64-v8a"
+          cp ffmpeg_in/libffmpeg.so "$P/android/app/src/main/jniLibs/arm64-v8a/libffmpeg.so"
+          # Android solo deja ejecutar libffmpeg.so si el sistema la EXTRAE a nativeLibraryDir -> useLegacyPackaging
+          python3 - <<'PY'
+          import glob, re
+          f = (glob.glob("build/flutter/android/app/build.gradle.kts") + glob.glob("build/flutter/android/app/build.gradle"))[0]
+          s = open(f, encoding="utf-8").read()
+          if "useLegacyPackaging" not in s:
+              s = re.sub(r"(\n\s*android\s*\{)", r"\1\n    packaging { jniLibs { useLegacyPackaging = true } }", s, count=1)
+              open(f, "w", encoding="utf-8").write(s)
+          print(f, "useLegacyPackaging" in s)
+          PY
+          [ -d build/site-packages ] && export SERIOUS_PYTHON_SITE_PACKAGES="$PWD/build/site-packages"
+          (cd "$P" && "$FL" build apk --release --split-per-abi --build-number ${{ github.run_number }})
+          cp "$P/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk" ForgeCut-android-arm64-ffmpeg.apk
+          BT="$(ls -d "${ANDROID_HOME:-$ANDROID_SDK_ROOT}"/build-tools/* | sort -V | tail -1)"
+          unzip -l ForgeCut-android-arm64-ffmpeg.apk | grep libffmpeg
+          "$BT/aapt2" dump xmltree --file AndroidManifest.xml ForgeCut-android-arm64-ffmpeg.apk | grep -i extractNativeLibs
+      - name: Plan B - inyectar en el APK ya compilado y firmar
+        if: steps.repack.outcome != 'success'
         env:
           KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
