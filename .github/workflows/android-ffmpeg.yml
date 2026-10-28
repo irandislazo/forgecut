@@ -65,6 +65,11 @@ jobs:
           }
           EOF
       - run: pip install "flet==${{ env.FLET_VERSION }}"
+      - name: Añadir flet-audio (SOLO Android; Windows no cambia)
+        run: |
+          sed -i 's/dependencies = \["flet==${{ env.FLET_VERSION }}"\]/dependencies = ["flet==${{ env.FLET_VERSION }}", "flet-audio==${{ env.FLET_VERSION }}"]/' pyproject.toml
+          echo "flet-audio==${{ env.FLET_VERSION }}" >> requirements.txt
+          grep -n "flet-audio" pyproject.toml requirements.txt
       - run: flet build apk --yes --split-per-abi --build-number ${{ github.run_number }} --verbose
       - name: Verificar (libffmpeg.so dentro + extracción activada)
         run: |
