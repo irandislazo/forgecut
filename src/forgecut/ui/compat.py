@@ -10,6 +10,8 @@ import asyncio
 import threading
 from typing import Callable, List, Optional
 
+import os
+
 import flet as ft
 
 from . import theme as T
@@ -345,25 +347,45 @@ async def ask_text(page: ft.Page, title: str, hint: str = "", initial: str = "")
 
 
 # ── selectores de archivo ──────────────────────────────────────────
-_picker = None
+_pickers: dict = {}
 
 
-def _get_picker(page: ft.Page):
-    global _picker
-    if _picker is None:
-        _picker = ft.FilePicker()
+def _get_picker(page: ft.Page, key: str = "files"):
+    """Un FilePicker POR USO («files» importar, «dir» carpeta de salida, «save» guardar como): así la última carpeta
+    que recuerda cada diálogo no se contamina entre sí (elegir la carpeta de exportación ya no cambia la de importación)."""
+    p = _pickers.get(key)
+    if p is None:
+        p = _pickers[key] = ft.FilePicker()
         try:
-            page.services.append(_picker)
+            page.services.append(p)
         except Exception:
-            page.overlay.append(_picker)
+            page.overlay.append(p)
         page.update()
-    return _picker
+    return p
+
+
+def writable_dir(path: str, fallback: str):
+    """(carpeta_usable, aviso|None). Si `path` no existe y no se puede crear/escribir (típico de rutas escritas a mano
+    en Android por el almacenamiento restringido) se usa `fallback` y se avisa."""
+    import tempfile
+    for cand, note in ((path, None), (fallback, f"No se puede escribir en «{path}»: se usa {fallback}")):
+        try:
+            if not (cand or "").strip():
+                continue
+            os.makedirs(cand, exist_ok=True)
+            fd, probe = tempfile.mkstemp(dir=cand)
+            os.close(fd)
+            os.remove(probe)
+            return cand, note
+        except Exception:
+            continue
+    return fallback, f"No se puede escribir en «{path}» ni en {fallback}"
 
 
 async def pick_files(page: ft.Page, multiple: bool = True, exts: Optional[List[str]] = None,
                      title: str = "Selecciona archivos") -> List[str]:
     try:
-        p = _get_picker(page)
+        p = _get_picker(page, "files")
         kw = {"allow_multiple": multiple, "dialog_title": title}
         if exts:
             kw["file_type"] = ft.FilePickerFileType.CUSTOM
@@ -375,16 +397,19 @@ async def pick_files(page: ft.Page, multiple: bool = True, exts: Optional[List[s
         return [x.strip().strip('"') for x in v.split(";") if x.strip()] if v else []
 
 
-async def pick_dir(page: ft.Page, title: str = "Selecciona carpeta") -> Optional[str]:
+async def pick_dir(page: ft.Page, title: str = "Selecciona carpeta", initial: Optional[str] = None) -> Optional[str]:
     try:
-        return await _get_picker(page).get_directory_path(dialog_title=title)
+        kw = {"dialog_title": title}
+        if initial and os.path.isdir(initial):
+            kw["initial_directory"] = initial
+        return await _get_picker(page, "dir").get_directory_path(**kw)
     except Exception:
         return await ask_text(page, title, "Pega la ruta de la carpeta")
 
 
 async def pick_save(page: ft.Page, title: str, filename: str, ext: str) -> Optional[str]:
     try:
-        p = await _get_picker(page).save_file(dialog_title=title, file_name=filename,
+        p = await _get_picker(page, "save").save_file(dialog_title=title, file_name=filename,
                                               allowed_extensions=[ext.lstrip(".")])
         return p
     except Exception:

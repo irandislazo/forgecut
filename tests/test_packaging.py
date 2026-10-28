@@ -51,6 +51,11 @@ class TestPackaging(unittest.TestCase):
                 "7f3 r--p 0 00:00 1 /system/lib64/libc.so\n")
         self.assertEqual(_android_lib_dirs(maps), ["/data/app/~~abc==/com.forgecut.forgecut-xyz==/lib/arm64"])
 
+    def test_android_dirs_deduced_even_when_libs_are_not_extracted(self):
+        from forgecut.media.ffmpeg_backend import _android_app_dirs
+        maps = "7f r--p 0 00:00 1 /data/app/~~abc==/com.forgecut.app-xyz==/base.apk\n"
+        self.assertIn("/data/app/~~abc==/com.forgecut.app-xyz==/lib/arm64", _android_app_dirs(maps))
+
     def test_android_ffmpeg_scripts_and_workflow_exist(self):
         for f in ("scripts/android/build_ffmpeg.sh", "scripts/android/inject_ffmpeg.sh", ".github/workflows/android-ffmpeg.yml"):
             self.assertTrue(os.path.exists(os.path.join(ROOT, f)), f)

@@ -7,7 +7,7 @@ import os
 import flet as ft
 
 from .. import theme as T
-from ..compat import Choice, btn, pick_dir, pick_save, safe_update, text, toast
+from ..compat import Choice, btn, pick_dir, pick_save, safe_update, text, toast, writable_dir
 
 
 # (clave, etiqueta, lado corto en px; None = tamaño original / borrador)
@@ -70,13 +70,13 @@ class DeliverPage:
         safe_update(self.root)
 
     async def choose_dir(self) -> None:
-        d = await pick_dir(self.page, "Carpeta de salida")
+        d = await pick_dir(self.page, "Carpeta de salida", self.out_dir.value)
         if d:
             self.out_dir.value = d
             safe_update(self.out_dir)
 
     async def choose_render_dir(self) -> None:
-        d = await pick_dir(self.page, "Carpeta donde guardar el vídeo")
+        d = await pick_dir(self.page, "Carpeta donde guardar el vídeo", self.render_dir.value)
         if d:
             self.render_dir.value = d
             safe_update(self.render_dir)
@@ -86,8 +86,9 @@ class DeliverPage:
         self.audio_msg.value = "Exportando…"
         safe_update(self.audio_msg)
         try:
-            outs = await asyncio.to_thread(self.s.export_audio, self.out_dir.value, self.fmt.value, only_sel)
-            self.audio_msg.value = f"✔ {len(outs)} archivo(s) en {self.out_dir.value}"
+            folder, note = writable_dir(self.out_dir.value, os.path.join(self.s.data_dir, "audio"))
+            outs = await asyncio.to_thread(self.s.export_audio, folder, self.fmt.value, only_sel)
+            self.audio_msg.value = f"✔ {len(outs)} archivo(s) en {folder}" + (f"  ⚠ {note}" if note else "")
         except Exception as ex:
             self.audio_msg.value = f"❌ {ex}"
         safe_update(self.audio_msg)
@@ -100,8 +101,10 @@ class DeliverPage:
         fname = f"{self.s.project.name}_{self.res.value}p.mp4" if self.res.value.isdigit() else f"{self.s.project.name}.mp4"
         folder = (self.render_dir.value or "").strip()
         if folder:                                            # carpeta elegida: sin diálogo de «guardar como»
-            os.makedirs(folder, exist_ok=True)
+            folder, note = writable_dir(folder, os.path.join(self.s.data_dir, "render"))
             out = os.path.join(folder, fname)
+            if note:
+                toast(self.page, note)
         else:
             out = await pick_save(self.page, "Guardar vídeo", fname, "mp4") or default
         self.bar.visible, self.bar.value = True, 0

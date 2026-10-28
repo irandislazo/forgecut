@@ -1,6 +1,8 @@
 """Aplicación ForgeCut: barra superior, páginas tipo DaVinci (Media · Cut · Edit · Plantillas · Deliver)."""
 from __future__ import annotations
 
+import os
+
 import flet as ft
 
 from ..core.project_io import EXT
@@ -15,6 +17,15 @@ from .workspace import Workspace
 
 PAGES = [("media", "Media", "PERM_MEDIA"), ("cut", "Cut", "CONTENT_CUT"), ("edit", "Edit", "EDIT"),
          ("templates", "Plantillas", "DASHBOARD_CUSTOMIZE"), ("deliver", "Deliver", "ROCKET_LAUNCH")]
+
+
+def _diag() -> str:
+    try:
+        from ..media.ffmpeg_backend import ffmpeg_diag
+        d = ffmpeg_diag() if os.environ.get("ANDROID_ROOT") else ""
+        return f" [{d}]" if d else ""
+    except Exception:
+        return ""
 
 
 def main(page: ft.Page) -> None:
@@ -96,7 +107,7 @@ def main(page: ft.Page) -> None:
             toast(page, state.last_error)
         if kind in ("project", "all", "timeline"):
             title.value = f"{state.project.name}{' •' if state.dirty else ''}" + \
-                          ("" if state.backend.available() else "   ⚠ sin ffmpeg: se puede importar y editar; vista previa y exportación desactivadas")
+                          ("" if state.backend.available() else "   ⚠ sin ffmpeg: se puede importar y editar; vista previa y exportación desactivadas" + _diag())
             safe_update(title)
 
     state.subscribe(on_state)

@@ -27,6 +27,46 @@ def _android_lib_dirs(maps_text: Optional[str] = None) -> List[str]:
     return list(dict.fromkeys(re.findall(r"(/data/(?:app|data)/[^\s]*?/lib/[^/\s]+)/[^/\s]+\.so", txt)))
 
 
+def _android_app_dirs(maps_text: Optional[str] = None) -> List[str]:
+    """Carpetas `lib/<abi>` de la instalación, deducidas de CUALQUIER ruta /data/app/<x>/<pkg>/… que aparezca en
+    /proc/self/maps (aunque las .so no estén extraídas y se carguen desde base.apk)."""
+    import re
+    try:
+        txt = maps_text if maps_text is not None else open("/proc/self/maps").read()
+    except OSError:
+        return []
+    out = []
+    for root in dict.fromkeys(re.findall(r"(/data/app/[^/\s]+/[^/\s]+)/", txt)):
+        out += [f"{root}/lib/{abi}" for abi in ("arm64", "arm64-v8a", "arm", "armeabi-v7a", "x86_64", "x86")]
+    return out
+
+
+def ffmpeg_diag() -> str:
+    """Texto corto para saber por qué no se detecta ffmpeg en Android (se muestra en la barra superior)."""
+    import re, zipfile
+    try:
+        maps = open("/proc/self/maps").read()
+    except OSError:
+        return ""
+    libs = [d for d in dict.fromkeys(_android_lib_dirs(maps) + _android_app_dirs(maps)) if os.path.isdir(d)]
+    found = _find("ffmpeg")
+    if found:
+        try:
+            r = subprocess.run([found, "-version"], capture_output=True, timeout=8)
+            return "ffmpeg encontrado pero " + ("no arranca: " + (r.stderr or b"").decode("utf-8", "ignore")[:60] if r.returncode else "OK")
+        except Exception as ex:                                  # noqa: BLE001
+            return f"ffmpeg en {found} no se puede ejecutar: {type(ex).__name__}: {str(ex)[:70]}"
+    apk = next(iter(re.findall(r"(/data/app/[^\s]*?\.apk)", maps)), "")
+    in_apk = False
+    try:
+        in_apk = bool(apk) and any("libffmpeg" in n for n in zipfile.ZipFile(apk).namelist())
+    except Exception:
+        pass
+    if in_apk:
+        return "el APK trae libffmpeg.so pero Android NO lo extrajo (falta useLegacyPackaging): usa el workflow nuevo"
+    return f"libffmpeg.so no está en el APK (carpetas lib: {len(libs)})"
+
+
 def _extra_dirs() -> List[str]:
     """Dónde buscar ffmpeg/ffprobe además del PATH: junto al ejecutable empaquetado (Windows/Linux/macOS), en una
     carpeta propia de ForgeCut y, en Android, en las librerías nativas de la app (el único sitio ejecutable)."""
@@ -44,7 +84,7 @@ def _extra_dirs() -> List[str]:
         dirs.append(os.path.join(local, "ForgeCut", "ffmpeg"))
     if "ANDROID_ROOT" in os.environ or os.path.isdir("/data/app"):
         import glob
-        dirs += _android_lib_dirs() + glob.glob("/data/app/*/*/lib/*") + glob.glob("/data/app/*/lib/*")
+        dirs += _android_lib_dirs() + _android_app_dirs() + glob.glob("/data/app/*/*/lib/*") + glob.glob("/data/app/*/lib/*")
         nl = os.environ.get("ANDROID_NATIVE_LIB_DIR")
         if nl:
             dirs.append(nl)

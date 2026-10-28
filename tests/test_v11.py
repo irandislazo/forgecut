@@ -71,7 +71,8 @@ class T(unittest.TestCase):
         self.assertEqual(len(grp().controls), 3)                     # auto: clip + 2 bordes
         self.s.set_edit_mode("move")
         self.assertEqual(len(grp().controls), 1)                     # mover: sin bordes, todo el clip se arrastra
-        self.assertTrue(grp().controls[0].on_pan_start)
+        self.assertIsNone(grp().controls[0].on_pan_start)
+        self.assertTrue(grp().controls[0].on_horizontal_drag_start and grp().controls[0].on_vertical_drag_start)   # gana al scroll
         self.s.set_edit_mode("trim")
         g = grp()
         self.assertEqual(len(g.controls), 3)
@@ -98,6 +99,40 @@ class T(unittest.TestCase):
         self.assertGreaterEqual(tv.stack.width, 800 + 600)           # el timeline crece para seguir hacia la derecha
         g.controls[0].on_pan_end(Ev())
         self.assertGreater(self.s.tl.all_clips()[0].start, 700)
+
+    def test_touch_autoscroll_needs_finger_push_toward_edge(self):
+        tv = TimelineView(self.s); tv.viewport_w = 800; tv._view = (0.0, 800.0); tv.INTENT_SCROLL = True
+        tv._push = 0.0
+        self.assertEqual(tv._edge_rate(600, 790), 0.0)               # tocar el borde sin empujar: no se desplaza
+        tv._push = -9.0
+        self.assertEqual(tv._edge_rate(600, 790), 0.0)               # empuje en sentido contrario: tampoco
+        tv._push = 6.0
+        r1 = tv._edge_rate(600, 790)
+        tv._push = 12.0
+        r2 = tv._edge_rate(600, 790)
+        self.assertTrue(0 < r1 < r2 <= 30)                           # más empuje = más velocidad, con tope suave
+        tv.INTENT_SCROLL = False; tv._push = 0.0
+        self.assertGreater(tv._edge_rate(600, 790), 0)               # escritorio: igual que antes
+
+    def test_move_mode_single_touch_drags_clip_on_both_axes_and_ends_once(self):
+        c = self.clip(0, 50); tv = TimelineView(self.s); self.s.select([c.id]); self.s.set_edit_mode("move")
+        g = [x for x in tv.stack.controls if type(x).__name__ == "Stack" and getattr(x, "controls", None)][0].controls[0]
+        g.on_horizontal_drag_start(Ev()); g.on_vertical_drag_start(Ev())
+        g.on_horizontal_drag_update(Ev(dx=80)); g.on_vertical_drag_update(Ev(dy=60))
+        g.on_horizontal_drag_end(Ev()); self.assertIsNotNone(tv._drag)    # aún queda el eje vertical
+        g.on_vertical_drag_end(Ev()); self.assertIsNone(tv._drag)
+        self.assertEqual(self.s.tl.all_clips()[0].start, 80)
+
+    def test_pickers_are_independent_and_unwritable_dirs_fall_back(self):
+        from forgecut.ui import compat
+        pg = flet_stub.Page()
+        a, b = compat._get_picker(pg, "files"), compat._get_picker(pg, "dir")
+        self.assertIsNot(a, b)
+        fb = tempfile.mkdtemp()
+        d, note = compat.writable_dir("/proc/forgecut_no/escribible", fb)
+        self.assertEqual(d, fb); self.assertIn("No se puede escribir", note)
+        ok = os.path.join(fb, "sub")
+        self.assertEqual(compat.writable_dir(ok, fb), (ok, None))
 
     def test_deliver_render_uses_chosen_folder(self):
         from forgecut.ui.pages.deliver_page import DeliverPage

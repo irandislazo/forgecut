@@ -14,6 +14,7 @@ from __future__ import annotations
 import time
 
 import asyncio
+import os
 
 import flet as ft
 
@@ -55,6 +56,8 @@ class _Ref:
 
 class TimelineView:
     ASYNC_DROP = True
+    INTENT_SCROLL = bool(os.environ.get("ANDROID_ROOT"))   # autodesplazamiento solo con empuje del dedo (Android)
+    _push = 0.0
     viewport_w = 0.0              # ancho visible del timeline (lo fija el Workspace)
 
     def __init__(self, state):
@@ -392,9 +395,14 @@ class TimelineView:
             mouse_cursor=_cursor("MOVE"),
             on_tap_down=lambda e, i=cid: self._clip_tap(i),
             on_tap=lambda e, i=cid: self._clip_click(i),
-            on_pan_start=None if s.edit_mode == "trim" else (lambda e, i=cid: self._drag_start(i)),
-            on_pan_update=None if s.edit_mode == "trim" else self._drag_update,
-            on_pan_end=None if s.edit_mode == "trim" else self._drag_end)
+            on_pan_start=None if s.edit_mode in ("trim", "move") else (lambda e, i=cid: self._drag_start(i)),
+            on_pan_update=None if s.edit_mode in ("trim", "move") else self._drag_update,
+            on_pan_end=None if s.edit_mode in ("trim", "move") else self._drag_end,
+            **({"on_horizontal_drag_start": lambda e, i=cid: self._mv_start(i, "h"),
+                "on_horizontal_drag_update": self._drag_update, "on_horizontal_drag_end": lambda e: self._mv_end("h"),
+                "on_vertical_drag_start": lambda e, i=cid: self._mv_start(i, "v"),
+                "on_vertical_drag_update": self._drag_update, "on_vertical_drag_end": lambda e: self._mv_end("v")}
+               if s.edit_mode == "move" else {}))
         if s.edit_mode == "move":                          # modo Mover: todo el clip es para arrastrar (sin bordes)
             hs = []
         elif s.edit_mode == "trim":                        # modo Recortar: bordes grandes y visibles
@@ -432,16 +440,36 @@ class TimelineView:
         if self._auto is not None:
             self._auto["on"] = False
         import threading
+        self._push = 0.0
         self._auto = {"on": True, "rate": 0.0}
         threading.Thread(target=self._auto_loop, args=(self._auto,), daemon=True).start()
+
+    # Modo Mover (táctil): el recognizer de arrastre HORIZONTAL del clip tiene la misma holgura que el del scroll del
+    # timeline y, al ser el hijo, gana: tocar un clip y arrastrar lo mueve a él, no al timeline (el «pan» no, necesita el doble).
+    def _mv_start(self, cid: str, axis: str) -> None:
+        if self._drag is None:
+            self._drag_start(cid)
+        if self._drag is not None:
+            self._drag.setdefault("axes", set()).add(axis)
+
+    def _mv_end(self, axis: str) -> None:
+        d = self._drag
+        if d is None:
+            return
+        d.setdefault("axes", set()).discard(axis)
+        if not d["axes"]:
+            self._drag_end(None)
 
     def _drag_update(self, e) -> None:
         d = self._drag
         if not d:
             return
         s, z = self.s, self.s.zoom
-        d["dx"] += evt_dx(e)
+        ev = evt_dx(e)
+        d["dx"] += ev
         d["dy"] += evt_dy(e)
+        if ev:
+            self._push = 0.6 * self._push + 0.4 * ev          # hacia dónde y con qué fuerza empuja el dedo
         if not self._tick("drag"):
             return
         self._apply_drag(d)
@@ -470,10 +498,18 @@ class TimelineView:
             return 0.0
         m = 70.0
         if right > sx + vp - m:
-            return min(45.0, 6.0 + (right - (sx + vp - m)) / 3.0)
-        if left < sx + m and sx > 0:
-            return -min(45.0, 6.0 + ((sx + m) - left) / 3.0)
-        return 0.0
+            base = min(45.0, 6.0 + (right - (sx + vp - m)) / 3.0)
+        elif left < sx + m and sx > 0:
+            base = -min(45.0, 6.0 + ((sx + m) - left) / 3.0)
+        else:
+            return 0.0
+        if not self.INTENT_SCROLL:                            # escritorio: comportamiento de siempre
+            return base
+        # táctil: solo se desplaza si el dedo EMPUJA hacia ese borde; la velocidad sigue a la del dedo
+        # (sin empuje no hay desplazamiento, así tocar el borde sin querer no mueve nada)
+        if base * self._push <= 0 or abs(self._push) < 1.5:
+            return 0.0
+        return max(-30.0, min(30.0, self._push * 1.6))
 
     def _scroll_by(self, px: float) -> None:
         new = max(0.0, self._view[0] + px)
@@ -493,6 +529,7 @@ class TimelineView:
             d, r = self._drag, auto["rate"]
             if not d or not auto["on"] or not r:
                 return
+            self._push *= 0.88                              # el empuje se enfría: dedo quieto = se detiene
             before = self._view[0]
             self._scroll_by(r)
             d["dx"] += self._view[0] - before
