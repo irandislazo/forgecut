@@ -3,11 +3,12 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 
 import flet as ft
 
 from .. import theme as T
-from ..compat import Choice, btn, pick_dir, pick_save, safe_update, text, toast, writable_dir, android_public_dirs, default_out_dir
+from ..compat import Choice, ask_text, btn, close_dialog, open_dialog, pick_dir, pick_save, safe_update, text, toast, writable_dir, android_public_dirs, default_out_dir
 
 
 # (clave, etiqueta, lado corto en px; None = tamaño original / borrador)
@@ -49,10 +50,87 @@ class DeliverPage:
                  self.bar,
                  ft.Row([btn("Renderizar MP4", lambda e: self.page.run_task(self.render), "MOVIE", primary=True), self.render_msg],
                         spacing=10, wrap=True)),
+            card("📁 Proyectos", text("Abre, renombra o elimina los proyectos guardados.", 12, T.TEXT_DIM),
+                 ft.Row([btn("Gestionar proyectos", lambda e: self.manage_projects(), "FOLDER_SPECIAL", primary=True)], wrap=True)),
         ], spacing=14, scroll=ft.ScrollMode.AUTO))
         self.res._cb = lambda k: self.refresh_info()
         state.subscribe(lambda k: self.refresh_info() if k in ("timeline", "selection", "all") else None)
         self.refresh_info()
+
+    # ── gestor de proyectos (abrir · renombrar · eliminar) ─────────
+    def manage_projects(self) -> None:
+        s, page = self.s, self.page
+        col = ft.Column(spacing=4, scroll=ft.ScrollMode.AUTO)
+        try:
+            w = max(260, min(400, int(float(page.width or 400)) - 48))
+        except (TypeError, ValueError):
+            w = 340
+        box = ft.Container(width=w, height=360, content=col)
+        dlg = ft.AlertDialog(modal=False, title=ft.Text("Mis proyectos"), content=box,
+                             actions=[ft.TextButton("Cerrar", on_click=lambda e: close_dialog(page, dlg))])
+        pending = {"del": None}
+
+        def ib(icon, fn, tip, color=T.TEXT):
+            return ft.Container(content=ft.Icon(getattr(ft.Icons, icon, ft.Icons.CIRCLE), size=18, color=color),
+                                width=32, height=32, on_click=fn, tooltip=tip)
+
+        def rebuild() -> None:
+            col.controls = []
+            for name, path, mt in s.list_projects():
+                cur = path == s.project_path
+                if pending["del"] == path:
+                    col.controls.append(ft.Container(padding=6, border_radius=4, bgcolor=T.PANEL_3, content=ft.Row([
+                        ft.Container(content=text(f"¿Eliminar «{name}»?", 12, T.TEXT), expand=True),
+                        ib("CHECK", lambda e, p=path: delete(p), "Sí, eliminar", "#ff6b6b"),
+                        ib("CLOSE", lambda e: cancel(), "Cancelar")], spacing=0)))
+                    continue
+                col.controls.append(ft.Container(padding=6, border_radius=4, bgcolor=T.PANEL_3, content=ft.Row([
+                    ft.Container(expand=True, content=ft.Column([
+                        text(name + ("  (abierto)" if cur else ""), 13, T.ACCENT if cur else T.TEXT, bold=True, no_wrap=True,
+                             overflow=ft.TextOverflow.ELLIPSIS),
+                        text(time.strftime("%d/%m/%Y %H:%M", time.localtime(mt)), 10, T.TEXT_DIM)], spacing=1)),
+                    ib("FOLDER_OPEN", lambda e, p=path: open_(p), "Abrir"),
+                    ib("EDIT", lambda e, p=path, n=name: page.run_task(rename, p, n), "Renombrar"),
+                    ib("DELETE", lambda e, p=path: ask_delete(p), "Eliminar", "#ff6b6b")], spacing=0)))
+            if not col.controls:
+                col.controls = [text("Aún no hay proyectos guardados.", 12, T.TEXT_DIM)]
+            safe_update(col)
+
+        def ask_delete(p):
+            pending["del"] = p
+            rebuild()
+
+        def cancel():
+            pending["del"] = None
+            rebuild()
+
+        def delete(p):
+            pending["del"] = None
+            try:
+                s.delete_project(p)
+            except Exception as ex:                                  # noqa: BLE001
+                toast(page, f"No se pudo eliminar: {ex}")
+            rebuild()
+
+        def open_(p):
+            close_dialog(page, dlg)
+            s.autosave()
+            try:
+                s.open(p)
+            except Exception as ex:                                  # noqa: BLE001
+                toast(page, f"No se pudo abrir: {ex}")
+
+        async def rename(p, old):
+            new = await ask_text(page, "Renombrar proyecto", "Nombre", old)
+            if new and new.strip():
+                try:
+                    s.rename_saved_project(p, new)
+                except Exception as ex:                              # noqa: BLE001
+                    toast(page, f"No se pudo renombrar: {ex}")
+                rebuild()
+
+        rebuild()
+        open_dialog(page, dlg)
 
     def refresh_info(self) -> None:
         n_all = len(self.s.audio_ranges(False))

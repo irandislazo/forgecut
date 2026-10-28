@@ -747,6 +747,31 @@ class AppState:
             pass
         return sorted(out, key=lambda x: -x[2])
 
+    def delete_project(self, path: str) -> None:
+        """Borra un proyecto guardado. Si es el abierto, se pasa a un proyecto nuevo vacío (sin recrear el archivo)."""
+        try:
+            os.remove(path)
+        except FileNotFoundError:
+            pass
+        if path == self.project_path:
+            self.new_project("Proyecto nuevo")
+
+    def rename_saved_project(self, path: str, name: str) -> str:
+        """Renombra un proyecto guardado (archivo y nombre interno). Devuelve la ruta resultante."""
+        name = (name or "").strip()
+        if not name:
+            return path
+        if path == self.project_path:
+            self.rename_project(name)
+            return self.save()
+        proj = load_project(path)
+        proj.name = name
+        new = path if os.path.basename(path)[:-len(EXT)] == self._safe_name(name) else self._unique_path(name)
+        save_project(proj, new)
+        if new != path:
+            os.remove(path)
+        return new
+
     def autosave(self) -> bool:
         """Guarda en silencio si hay cambios sin guardar (temporizador, cierre o paso a segundo plano)."""
         if not self.dirty:
