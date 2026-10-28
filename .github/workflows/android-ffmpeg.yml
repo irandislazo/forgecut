@@ -24,7 +24,6 @@ jobs:
       - if: steps.cache.outputs.cache-hit != 'true'
         run: |
           sudo apt-get update && sudo apt-get install -y nasm pkg-config make
-          sed -i "s/ --enable-pie//" scripts/android/build_ffmpeg.sh   # opción inexistente en ffmpeg (por si el script antiguo sigue en el repo)
           bash scripts/android/build_ffmpeg.sh
       - uses: actions/upload-artifact@v4
         with: { name: libffmpeg-arm64, path: out/libffmpeg.so }
@@ -43,49 +42,36 @@ jobs:
         with: { path: ~/flutter, key: "flutter-${{ runner.os }}-${{ env.FLET_VERSION }}" }
       - uses: actions/download-artifact@v4
         with: { name: libffmpeg-arm64, path: ffmpeg_in }
+      # Un único «flet build apk» NORMAL: un script init de Gradle (aplica a cualquier build de la máquina) añade
+      # libffmpeg.so a jniLibs y fuerza la EXTRACCIÓN de librerías nativas (useLegacyPackaging). Sin extracción Android
+      # deja el .so dentro del APK y no se puede ejecutar -> la app dice «sin ffmpeg».
+      - name: Preparar Gradle (jniLibs + extracción de librerías)
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/ffmpeg_jni/arm64-v8a" "$HOME/.gradle/init.d"
+          cp ffmpeg_in/libffmpeg.so "$GITHUB_WORKSPACE/ffmpeg_jni/arm64-v8a/libffmpeg.so"
+          echo "FORGECUT_JNILIBS=$GITHUB_WORKSPACE/ffmpeg_jni" >> "$GITHUB_ENV"
+          cat > "$HOME/.gradle/init.d/forgecut.gradle" <<'EOF'
+          allprojects {
+            afterEvaluate { p ->
+              def a = p.extensions.findByName('android')
+              if (a != null && p.plugins.hasPlugin('com.android.application')) {
+                def pk = a.hasProperty('packaging') ? a.packaging : a.packagingOptions
+                pk.jniLibs.useLegacyPackaging = true
+                def d = System.getenv('FORGECUT_JNILIBS')
+                if (d) { a.sourceSets.getByName('main').jniLibs.srcDir(d) }
+                println "FORGECUT: useLegacyPackaging=true, jniLibs=" + d
+              }
+            }
+          }
+          EOF
       - run: pip install "flet==${{ env.FLET_VERSION }}"
       - run: flet build apk --yes --split-per-abi --build-number ${{ github.run_number }} --verbose
-      - name: Reempaquetar con ffmpeg (libs extraíbles) - método principal
-        id: repack
-        continue-on-error: true
+      - name: Verificar (libffmpeg.so dentro + extracción activada)
         run: |
-          set -euo pipefail
-          P=build/flutter
-          FL="$(ls -d "$HOME"/flutter/*/bin/flutter | head -1)"
-          mkdir -p "$P/android/app/src/main/jniLibs/arm64-v8a"
-          cp ffmpeg_in/libffmpeg.so "$P/android/app/src/main/jniLibs/arm64-v8a/libffmpeg.so"
-          # Android solo deja ejecutar libffmpeg.so si el sistema la EXTRAE a nativeLibraryDir -> useLegacyPackaging
-          python3 - <<'PY'
-          import glob, re
-          f = (glob.glob("build/flutter/android/app/build.gradle.kts") + glob.glob("build/flutter/android/app/build.gradle"))[0]
-          s = open(f, encoding="utf-8").read()
-          if "useLegacyPackaging" not in s:
-              s = re.sub(r"(\n\s*android\s*\{)", r"\1\n    packaging { jniLibs { useLegacyPackaging = true } }", s, count=1)
-              open(f, "w", encoding="utf-8").write(s)
-          print(f, "useLegacyPackaging" in s)
-          PY
-          [ -d build/site-packages ] && export SERIOUS_PYTHON_SITE_PACKAGES="$PWD/build/site-packages"
-          (cd "$P" && "$FL" build apk --release --split-per-abi --build-number ${{ github.run_number }})
-          cp "$P/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk" ForgeCut-android-arm64-ffmpeg.apk
+          APK="$(ls build/apk/*arm64-v8a*.apk | head -1)"; echo "APK: $APK"
+          unzip -l "$APK" | grep libffmpeg
           BT="$(ls -d "${ANDROID_HOME:-$ANDROID_SDK_ROOT}"/build-tools/* | sort -V | tail -1)"
-          unzip -l ForgeCut-android-arm64-ffmpeg.apk | grep libffmpeg
-          "$BT/aapt2" dump xmltree --file AndroidManifest.xml ForgeCut-android-arm64-ffmpeg.apk | grep -i extractNativeLibs
-      - name: Plan B - inyectar en el APK ya compilado y firmar
-        if: steps.repack.outcome != 'success'
-        env:
-          KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          KS_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-        run: |
-          if [ -n "$KS_B64" ]; then
-            echo "$KS_B64" | base64 -d > ks.jks; ALIAS="$KS_ALIAS"; PASS="$KS_PASS"
-          else
-            keytool -genkeypair -keystore ks.jks -storepass android -keypass android -alias forgecut \
-              -dname "CN=ForgeCut" -keyalg RSA -keysize 2048 -validity 10000
-            ALIAS=forgecut; PASS=android
-          fi
-          APK="$(ls build/apk/*arm64-v8a*.apk | head -1)"
+          "$BT/aapt2" dump xmltree --file AndroidManifest.xml "$APK" | grep -i extractNativeLibs
           cp "$APK" ForgeCut-android-arm64-ffmpeg.apk
-          bash scripts/android/inject_ffmpeg.sh ForgeCut-android-arm64-ffmpeg.apk ffmpeg_in/libffmpeg.so ks.jks "$ALIAS" "$PASS"
       - uses: actions/upload-artifact@v4
         with: { name: forgecut-android-arm64-ffmpeg, path: ForgeCut-android-arm64-ffmpeg.apk }
