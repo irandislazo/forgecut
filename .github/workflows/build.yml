@@ -30,7 +30,6 @@ jobs:
   tests:
     runs-on: ubuntu-latest
     continue-on-error: true      # un test fallido avisa pero NO bloquea la compilación del APK/Windows
-    continue-on-error: true      # un test fallido avisa pero NO bloquea la compilación del APK/Windows
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
