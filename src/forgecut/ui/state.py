@@ -20,7 +20,7 @@ from ..automation.templates import PoolItem, Template, TemplateStore
 from ..core import editing as ed
 from ..core.history import History
 from ..core.models import Clip, MediaAsset, MediaBin, Project, Timeline, new_id
-from ..core.project_io import load_project, save_project
+from ..core.project_io import EXT, load_project, save_project
 from ..media import get_backend
 
 IMAGE_DEFAULT_S = 5.0
@@ -167,7 +167,7 @@ class AppState:
             self.notify("live")
 
     def set_zoom(self, zoom: float) -> None:
-        self.zoom = max(0.05, min(float(zoom), 12.0))
+        self.zoom = max(0.0005, min(float(zoom), 12.0))
         self.notify("zoom")
 
     # ── medios ─────────────────────────────────────────────────────
@@ -701,8 +701,64 @@ class AppState:
         self.selection, self.playhead, self.project_path, self.dirty = [], 0, None, False
         self.notify("all")
 
+    # ── proyectos: nombre, lista y autoguardado ────────────────────
+    @property
+    def projects_dir(self) -> str:
+        return os.path.join(self.data_dir, "projects")
+
+    @staticmethod
+    def _safe_name(name: str) -> str:
+        n = "".join(ch for ch in (name or "").strip() if ch not in '\\/:*?"<>|').strip(" .")
+        return n or "Proyecto sin título"
+
+    def rename_project(self, name: str) -> None:
+        name = (name or "").strip()
+        if not name:
+            return
+        self.project.name = name
+        cur = self.project_path
+        if cur and os.path.exists(cur) and os.path.basename(cur)[:-len(EXT)] != self._safe_name(name):
+            try:                                              # el archivo guardado también cambia de nombre
+                new = self._unique_path(name)
+                os.replace(cur, new)
+                self.project_path = new
+            except OSError:
+                pass
+        self.dirty = True
+        self.notify("project")
+
+    def _unique_path(self, name: str) -> str:
+        base, n = os.path.join(self.projects_dir, self._safe_name(name)), 1
+        path = base + EXT
+        while os.path.exists(path):
+            n += 1
+            path = f"{base} {n}{EXT}"
+        return path
+
+    def list_projects(self) -> List[tuple]:
+        """[(nombre, ruta, fecha_modificación)] de los proyectos guardados, el más reciente primero."""
+        out = []
+        try:
+            for f in os.listdir(self.projects_dir):
+                if f.lower().endswith(EXT):
+                    fp = os.path.join(self.projects_dir, f)
+                    out.append((f[:-len(EXT)], fp, os.path.getmtime(fp)))
+        except OSError:
+            pass
+        return sorted(out, key=lambda x: -x[2])
+
+    def autosave(self) -> bool:
+        """Guarda en silencio si hay cambios sin guardar (temporizador, cierre o paso a segundo plano)."""
+        if not self.dirty:
+            return False
+        try:
+            self.save()
+            return True
+        except Exception:                                    # noqa: BLE001  el autoguardado nunca debe romper la app
+            return False
+
     def save(self, path: Optional[str] = None) -> str:
-        path = path or self.project_path or os.path.join(self.data_dir, "projects", f"{self.project.name}.fcproj")
+        path = path or self.project_path or self._unique_path(self.project.name)
         self.project_path = save_project(self.project, path)
         self.dirty = False
         self.notify("project")

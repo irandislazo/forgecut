@@ -32,6 +32,16 @@ SNAP_COLOR = "#ffd60a"
 MAX_STRIP_PX = 40000          # por encima se omite la imagen del clip (zoom enorme) y queda el color liso
 
 
+def _center():
+    try:
+        return ft.Alignment(0, 0)
+    except Exception:
+        try:
+            return ft.alignment.center
+        except Exception:
+            return None
+
+
 def _gd(**kw):
     """GestureDetector cuyos manejadores no disparan el diff global de página de Flet."""
     for k, v in list(kw.items()):
@@ -185,17 +195,22 @@ class TimelineView:
                 changed.append(ref.outline)
         safe_update(*changed)
 
+    def _hbtn(self, icon: str, fn, tip: str, color: str):
+        """Icono pequeño de cabecera (24 px de ancho, sin el relleno de IconButton): caben bien en pantallas estrechas."""
+        return ft.Container(content=ft.Icon(getattr(ft.Icons, icon, ft.Icons.CIRCLE), size=15, color=color), width=24,
+                            height=TRACK_H - 8, alignment=_center(), on_click=fn, tooltip=tip)
+
     def _header(self, tr):
         col = T.TEXT if not tr.muted else T.TEXT_DIM
         eye = "VISIBILITY_OFF" if tr.hidden else "VISIBILITY"
-        return ft.Container(height=TRACK_H, bgcolor=T.PANEL_2, padding=4, content=ft.Row([
-            text(tr.name, 12, col, bold=True),
-            icon_btn("LOCK" if tr.locked else "LOCK_OPEN", lambda e, t=tr: self.s.toggle_track(t.id, "locked"), "Bloquear", 14,
-                     T.ACCENT if tr.locked else T.TEXT_DIM),
-            icon_btn("VOLUME_OFF" if tr.muted else "VOLUME_UP", lambda e, t=tr: self.s.toggle_track(t.id, "muted"), "Silenciar", 14,
-                     T.ACCENT if tr.muted else T.TEXT_DIM) if tr.kind == "audio" else
-            icon_btn(eye, lambda e, t=tr: self.s.toggle_track(t.id, "hidden"), "Mostrar/ocultar", 14,
-                     T.ACCENT if tr.hidden else T.TEXT_DIM)], spacing=0))
+        return ft.Container(height=TRACK_H, bgcolor=T.PANEL_2, padding=ft.Padding(left=4, top=4, right=2, bottom=4), content=ft.Row([
+            ft.Container(content=text(tr.name, 12, col, bold=True, no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS), expand=True),
+            self._hbtn("LOCK" if tr.locked else "LOCK_OPEN", lambda e, t=tr: self.s.toggle_track(t.id, "locked"), "Bloquear",
+                       T.ACCENT if tr.locked else T.TEXT_DIM),
+            self._hbtn("VOLUME_OFF" if tr.muted else "VOLUME_UP", lambda e, t=tr: self.s.toggle_track(t.id, "muted"), "Silenciar",
+                       T.ACCENT if tr.muted else T.TEXT_DIM) if tr.kind == "audio" else
+            self._hbtn(eye, lambda e, t=tr: self.s.toggle_track(t.id, "hidden"), "Mostrar/ocultar",
+                       T.ACCENT if tr.hidden else T.TEXT_DIM)], spacing=0, vertical_alignment=ft.CrossAxisAlignment.CENTER))
 
     # ── regla ──────────────────────────────────────────────────────
     def _ruler(self, width: float, z: float, lo: float = 0.0, hi: float = 1e12):

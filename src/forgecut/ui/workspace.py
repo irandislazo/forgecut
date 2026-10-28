@@ -3,11 +3,14 @@ visibilidad cambia según la página, como las páginas de DaVinci Resolve."""
 from __future__ import annotations
 
 import asyncio
+import math
+import os
 
 import flet as ft
 
 from . import theme as T
-from .compat import Choice, btn, icon_btn, pick_dir, safe_update, text, toast
+from .compat import (Choice, android_public_dirs, btn, default_out_dir, icon_btn, safe_update, text, toast,
+                     writable_dir)
 from .widgets.inspector import Inspector
 from .widgets.media_pool import MediaPool
 from .widgets.preview import Preview
@@ -18,15 +21,39 @@ class Toolbar:
     def __init__(self, state, page: ft.Page):
         self.s, self.page = state, page
         self.thr = ft.TextField(value="0.30", width=60, dense=True, text_size=12, tooltip="Sensibilidad de escenas (0.1–0.9)")
-        self.zoom = ft.Slider(min=0.05, max=6.0, value=state.zoom, width=140, on_change=lambda e: state.set_zoom(float(e.control.value)))
+        self.viewport = lambda: 800.0                  # ancho visible del timeline (lo fija el Workspace)
+        self.zoom = ft.Slider(min=0.0, max=1.0, value=0.5, width=140, on_change=self._slide)
         self.tool_btns = {}
-        self.mode = Choice([("auto", "Auto"), ("move", "✥ Mover"), ("trim", "↔ Recortar")], "auto",
-                           on_change=lambda k: state.set_edit_mode(k))      # botones táctiles (Android)
         self.fmt = Choice([("mp3", "MP3"), ("wav", "WAV")], "mp3")
         self.row = ft.Row(spacing=0, vertical_alignment=ft.CrossAxisAlignment.CENTER, wrap=False)
         self.root = ft.Container(content=ft.Row([self.row], scroll=ft.ScrollMode.AUTO), bgcolor=T.PANEL_2, padding=4)
-        state.subscribe(lambda k: self.refresh() if k in ("tool", "all", "timeline") else None)
+        state.subscribe(lambda k: self.refresh() if k in ("tool", "all", "timeline") else (self.sync_zoom() if k == "zoom" else None))
         self.refresh()
+
+    # ── zoom: el rango del deslizable llega hasta «ver todo el timeline», sea cual sea su largo ──
+    ZMAX = 6.0
+
+    def zoom_range(self):
+        tl = self.s.tl
+        fit = float(self.viewport() or 800.0) / max(float(tl.duration) * 1.05, tl.fps * 10.0)
+        zmin = max(0.0005, min(0.05, fit))
+        return zmin, max(zmin * 2, self.ZMAX)
+
+    def _slide(self, e) -> None:
+        zmin, zmax = self.zoom_range()
+        self.s.set_zoom(zmin * (zmax / zmin) ** float(e.control.value))
+
+    def sync_zoom(self) -> None:
+        zmin, zmax = self.zoom_range()
+        v = math.log(max(self.s.zoom, zmin) / zmin) / math.log(zmax / zmin)
+        v = max(0.0, min(1.0, v))
+        if abs(v - float(self.zoom.value or 0)) > 0.003:
+            self.zoom.value = v
+            safe_update(self.zoom)
+
+    def _zoom_step(self, factor: float) -> None:
+        zmin, zmax = self.zoom_range()
+        self.s.set_zoom(max(zmin, min(zmax, self.s.zoom * factor)))
 
     def refresh(self) -> None:
         s = self.s
@@ -34,6 +61,9 @@ class Toolbar:
         self.row.controls = [
             c("NEAR_ME", lambda e: s.set_tool("select"), "Selección (V)", s.tool == "select"),
             c("CONTENT_CUT", lambda e: s.set_tool("razor"), "Cuchilla (B): clic en un clip para cortar", s.tool == "razor"),
+            c("AUTO_FIX_HIGH", lambda e: s.set_edit_mode("auto"), "Auto: mueve o recorta según dónde toques el clip", s.edit_mode == "auto"),
+            c("OPEN_WITH", lambda e: s.set_edit_mode("move"), "Mover clips (táctil)", s.edit_mode == "move"),
+            c("SWAP_HORIZ", lambda e: s.set_edit_mode("trim"), "Recortar bordes (táctil)", s.edit_mode == "trim"),
             c("CALL_SPLIT", lambda e: s.split_at_playhead(), "Cortar en el playhead (Ctrl+B)"),
             c("DELETE", lambda e: s.delete_selected(False), "Borrar (Supr)"),
             c("DELETE_SWEEP", lambda e: s.delete_selected(True), "Borrar con ripple (Mayús+Supr)"),
@@ -45,16 +75,17 @@ class Toolbar:
             c("UNDO", lambda e: s.undo(), "Deshacer (Ctrl+Z)"), c("REDO", lambda e: s.redo(), "Rehacer (Ctrl+Y)"),
             ft.Container(width=10),
             c("MAGNET" if hasattr(ft.Icons, "MAGNET") else "GRID_ON", self._toggle_snap, "Imán (snap)", s.snap_on),
-            icon_btn("ZOOM_OUT", None, "", 16, T.TEXT_DIM), self.zoom, icon_btn("ZOOM_IN", None, "", 16, T.TEXT_DIM),
+            icon_btn("ZOOM_OUT", lambda e: self._zoom_step(1 / 1.5), "Alejar", 16, T.TEXT_DIM), self.zoom,
+            icon_btn("ZOOM_IN", lambda e: self._zoom_step(1.5), "Acercar", 16, T.TEXT_DIM),
             ft.Container(width=10),
             btn("Auto-cortar escenas", self._auto_cut, "MOVIE_FILTER", tooltip="Corta el clip seleccionado en cada cambio de escena (frame exacto)"),
             self.thr,
             ft.Container(width=10),
             btn("Exportar audio selección", self._export_audio, "AUDIOTRACK",
                 tooltip="Guarda como archivo de audio el tramo de cada clip seleccionado (Ctrl+clic o marquesina para varios)"),
-            self.fmt.control,
-            ft.Container(width=10), self.mode.control]
+            self.fmt.control]
         safe_update(self.row)
+        self.sync_zoom()
 
     def _toggle_multi(self, e) -> None:
         self.s.multi_mode = not self.s.multi_mode
@@ -68,9 +99,8 @@ class Toolbar:
         if not self.s.selection:
             toast(self.page, "Selecciona uno o varios clips (Ctrl+clic o arrastra una marquesina).")
             return
-        out_dir = await pick_dir(self.page, "Carpeta donde guardar los audios")
-        if not out_dir:
-            return
+        out_dir, note = writable_dir(default_out_dir("audio", self.s.data_dir), os.path.join(self.s.data_dir, "export_audio"),
+                                     android_public_dirs("audio"))          # Music/ForgeCut por defecto
         toast(self.page, "Exportando audio…")
         try:
             outs = await asyncio.to_thread(self.s.export_selected_audio, out_dir, self.fmt.value)
@@ -142,6 +172,8 @@ class Workspace:
             self._set_switch("pool" if (compact and self.page_name == "media") else "preview")
         self.preview.resize(min(560, int(w) - 24) if compact else 560)
         self.timeline.viewport_w = max(0.0, float(w) - 100.0)
+        self.toolbar.viewport = lambda: self.timeline.viewport_w
+        self.toolbar.sync_zoom()
         self._layout()
 
     def _layout(self) -> None:

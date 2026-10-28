@@ -1,7 +1,10 @@
 """Aplicación ForgeCut: barra superior, páginas tipo DaVinci (Media · Cut · Edit · Plantillas · Deliver)."""
 from __future__ import annotations
 
+import asyncio
+import inspect
 import os
+import time
 
 import flet as ft
 
@@ -9,7 +12,8 @@ from ..core.project_io import EXT
 from . import theme as T
 import threading
 
-from .compat import btn, icon_btn, no_auto_update, pick_files, safe_update, text, toast, ui_call
+from .compat import (ask_text, btn, close_dialog, icon_btn, no_auto_update, open_dialog, pick_files, safe_update,
+                     text, toast, ui_call)
 from .pages.deliver_page import DeliverPage
 from .pages.templates_page import TemplatesPage
 from .state import AppState
@@ -81,23 +85,80 @@ def main(page: ft.Page) -> None:
     templates = TemplatesPage(state, page, on_generated=lambda: show("edit"))
 
     # ── barra superior ─────────────────────────────────────────────
-    async def on_open(e) -> None:
+    async def on_open_file(e=None) -> None:
         paths = await pick_files(page, False, [EXT.lstrip(".")], "Abrir proyecto")
         if paths:
-            try:
-                state.open(paths[0])
-            except Exception as ex:
-                toast(page, f"No se pudo abrir: {ex}")
+            _open_path(paths[0])
 
-    def on_save(e=None) -> None:
+    def _open_path(path: str) -> None:
+        state.autosave()                                        # no se pierde lo que había abierto
+        try:
+            state.open(path)
+        except Exception as ex:
+            toast(page, f"No se pudo abrir: {ex}")
+
+    def on_open(e=None) -> None:
+        items = []
+        dlg = ft.AlertDialog(modal=False, title=ft.Text("Abrir proyecto"))
+
+        def pick(path):
+            close_dialog(page, dlg)
+            _open_path(path)
+
+        for name, path, mt in state.list_projects():
+            items.append(ft.Container(
+                padding=8, border_radius=4, bgcolor=T.PANEL_3, ink=True, on_click=lambda e, p=path: pick(p),
+                content=ft.Column([text(name, 13, T.TEXT, bold=True),
+                                   text(time.strftime("%d/%m/%Y %H:%M", time.localtime(mt)), 10, T.TEXT_DIM)], spacing=1)))
+        if not items:
+            items = [text("Aún no hay proyectos guardados.", 12, T.TEXT_DIM)]
+
+        def browse(e):
+            close_dialog(page, dlg)
+            page.run_task(on_open_file)
+
+        dlg.content = ft.Container(width=360, height=min(380, 70 * len(items) + 10),
+                                   content=ft.Column(items, spacing=4, scroll=ft.ScrollMode.AUTO))
+        dlg.actions = [ft.TextButton("Examinar archivo…", on_click=browse),
+                       ft.TextButton("Cerrar", on_click=lambda e: close_dialog(page, dlg))]
+        open_dialog(page, dlg)
+
+    async def new_named(e=None) -> None:
+        name = await ask_text(page, "Nuevo proyecto", "Nombre del proyecto", "Proyecto nuevo")
+        if name and name.strip():
+            state.autosave()
+            state.new_project(name.strip())
+
+    def do_save() -> None:
         try:
             toast(page, f"Guardado: {state.save()}")
         except Exception as ex:
             toast(page, f"No se pudo guardar: {ex}")
 
+    async def save_named() -> None:
+        name = await ask_text(page, "Guardar proyecto", "Nombre del proyecto", state.project.name)
+        if name is None:
+            return
+        if name.strip():
+            state.project.name = name.strip()
+        do_save()
+
+    def on_save(e=None) -> None:
+        if state.project_path is None:                          # primer guardado: pide el nombre
+            page.run_task(save_named)
+        else:
+            do_save()
+
+    async def rename_title() -> None:
+        name = await ask_text(page, "Nombre del proyecto", "Nombre", state.project.name)
+        if name and name.strip():
+            state.rename_project(name)
+
     topbar = ft.Container(bgcolor=T.PANEL, padding=6,
-                          content=ft.Row([text("ForgeCut", 15, T.ACCENT, bold=True), title, ft.Container(expand=True),
-                                          btn("Nuevo", lambda e: state.new_project(), "NOTE_ADD"),
+                          content=ft.Row([text("ForgeCut", 15, T.ACCENT, bold=True),
+                                          ft.Container(content=title, on_click=lambda e: page.run_task(rename_title),
+                                                       tooltip="Cambiar nombre del proyecto"), ft.Container(expand=True),
+                                          btn("Nuevo", lambda e: page.run_task(new_named), "NOTE_ADD"),
                                           btn("Abrir", on_open, "FOLDER_OPEN"), btn("Guardar", on_save, "SAVE"),
                                           icon_btn("UNDO", lambda e: state.undo(), "Deshacer"),
                                           icon_btn("REDO", lambda e: state.redo(), "Rehacer")], spacing=6))
@@ -158,6 +219,36 @@ def main(page: ft.Page) -> None:
             state.set_playhead(state.tl.duration)
 
     page.on_keyboard_event = on_key
+
+    # ── autoguardado (como DaVinci): cada minuto, al cerrar y al pasar a segundo plano ──
+    async def _autosave_loop() -> None:
+        while True:
+            await asyncio.sleep(60)
+            state.autosave()
+
+    def on_lifecycle(e=None) -> None:
+        if "resume" not in str(getattr(e, "state", "")).lower():
+            state.autosave()
+
+    async def on_window(e) -> None:
+        if "close" in str(getattr(e, "type", "")).lower():
+            state.autosave()
+            try:
+                page.window.prevent_close = False
+                r = page.window.destroy()
+                if inspect.isawaitable(r):
+                    await r
+            except Exception:
+                pass
+
+    try:
+        page.run_task(_autosave_loop)
+        page.on_app_lifecycle_state_change = on_lifecycle
+        if not os.environ.get("ANDROID_ROOT"):
+            page.window.prevent_close = True
+            page.window.on_event = on_window
+    except Exception:
+        pass
 
     # ── diseño adaptable (móvil / ventana estrecha) ────────────────
     last_w = {"w": 0.0}

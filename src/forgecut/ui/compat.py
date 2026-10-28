@@ -364,11 +364,20 @@ def _get_picker(page: ft.Page, key: str = "files"):
     return p
 
 
-def writable_dir(path: str, fallback: str):
-    """(carpeta_usable, aviso|None). Si `path` no existe y no se puede crear/escribir (típico de rutas escritas a mano
-    en Android por el almacenamiento restringido) se usa `fallback` y se avisa."""
+def android_public_dirs(kind: str) -> list:
+    """Carpetas públicas donde una app SIN permiso de «todos los archivos» sí puede crear sus propios archivos
+    (Movies / Music / Download). Vacío fuera de Android."""
+    if not os.environ.get("ANDROID_ROOT"):
+        return []
+    sub = {"render": "Movies", "audio": "Music"}.get(kind, "Download")
+    return [f"/storage/emulated/0/{sub}/ForgeCut", "/storage/emulated/0/Download/ForgeCut"]
+
+
+def writable_dir(path: str, fallback: str, extras=()):
+    """(carpeta_usable, aviso|None). Prueba `path`, luego `extras` (carpetas públicas de Android) y por último
+    `fallback` (carpeta privada de la app). El aviso dice dónde se guardó realmente."""
     import tempfile
-    for cand, note in ((path, None), (fallback, f"No se puede escribir en «{path}»: se usa {fallback}")):
+    for cand in [path, *extras, fallback]:
         try:
             if not (cand or "").strip():
                 continue
@@ -376,10 +385,21 @@ def writable_dir(path: str, fallback: str):
             fd, probe = tempfile.mkstemp(dir=cand)
             os.close(fd)
             os.remove(probe)
-            return cand, note
+            return cand, (None if cand == path else f"No se puede escribir en «{path}»: se guardó en {cand}")
         except Exception:
             continue
     return fallback, f"No se puede escribir en «{path}» ni en {fallback}"
+
+
+def default_out_dir(kind: str, data_dir: str) -> str:
+    """Carpeta de salida por defecto: pública y visible en Android (Movies/ForgeCut), privada si no se puede."""
+    private = os.path.join(data_dir, "render" if kind == "render" else "export_audio")
+    extra = [] if os.environ.get("ANDROID_ROOT") or kind != "audio" else [os.path.join(os.path.expanduser("~"), "Music", "ForgeCut")]
+    for cand in [*android_public_dirs(kind), *extra]:
+        d, note = writable_dir(cand, "")
+        if note is None:
+            return d
+    return private
 
 
 async def pick_files(page: ft.Page, multiple: bool = True, exts: Optional[List[str]] = None,

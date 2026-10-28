@@ -7,7 +7,7 @@ import os
 import flet as ft
 
 from .. import theme as T
-from ..compat import Choice, btn, pick_dir, pick_save, safe_update, text, toast, writable_dir
+from ..compat import Choice, btn, pick_dir, pick_save, safe_update, text, toast, writable_dir, android_public_dirs, default_out_dir
 
 
 # (clave, etiqueta, lado corto en px; None = tamaño original / borrador)
@@ -26,9 +26,9 @@ class DeliverPage:
         self.crf = Choice(CRFS, "20")
         self.res_info = text("", 11, T.TEXT_DIM)
         self.out_dir = ft.TextField(label="Carpeta de salida (audio)", dense=True, width=300, text_size=12,
-                                    value=os.path.join(state.data_dir, "export_audio"))
+                                    value=default_out_dir("audio", state.data_dir))
         self.render_dir = ft.TextField(label="Carpeta de salida (vídeo)", dense=True, width=300, text_size=12,
-                                       value=os.path.join(state.data_dir, "render"))
+                                       value=default_out_dir("render", state.data_dir))
         self.info = text("", 12, T.TEXT_DIM)
         self.audio_msg = text("", 12, T.TEXT_DIM)
         self.bar = ft.ProgressBar(value=0, visible=False)
@@ -86,7 +86,7 @@ class DeliverPage:
         self.audio_msg.value = "Exportando…"
         safe_update(self.audio_msg)
         try:
-            folder, note = writable_dir(self.out_dir.value, os.path.join(self.s.data_dir, "audio"))
+            folder, note = writable_dir(self.out_dir.value, os.path.join(self.s.data_dir, "audio"), android_public_dirs("audio"))
             outs = await asyncio.to_thread(self.s.export_audio, folder, self.fmt.value, only_sel)
             self.audio_msg.value = f"✔ {len(outs)} archivo(s) en {folder}" + (f"  ⚠ {note}" if note else "")
         except Exception as ex:
@@ -101,7 +101,7 @@ class DeliverPage:
         fname = f"{self.s.project.name}_{self.res.value}p.mp4" if self.res.value.isdigit() else f"{self.s.project.name}.mp4"
         folder = (self.render_dir.value or "").strip()
         if folder:                                            # carpeta elegida: sin diálogo de «guardar como»
-            folder, note = writable_dir(folder, os.path.join(self.s.data_dir, "render"))
+            folder, note = writable_dir(folder, os.path.join(self.s.data_dir, "render"), android_public_dirs("render"))
             out = os.path.join(folder, fname)
             if note:
                 toast(self.page, note)

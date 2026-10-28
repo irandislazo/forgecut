@@ -134,6 +134,35 @@ class T(unittest.TestCase):
         ok = os.path.join(fb, "sub")
         self.assertEqual(compat.writable_dir(ok, fb), (ok, None))
 
+    def test_android_public_dirs_and_fallback_chain(self):
+        from forgecut.ui import compat
+        self.assertEqual(compat.android_public_dirs("render"), [])          # fuera de Android no hay carpetas públicas
+        fb, pub = tempfile.mkdtemp(), tempfile.mkdtemp()
+        d, note = compat.writable_dir("/proc/x/no", fb, [pub + "/ForgeCut"])  # usuario → pública → privada
+        self.assertEqual(d, pub + "/ForgeCut"); self.assertIn("se guardó en", note)
+        d, note = compat.writable_dir("/proc/x/no", fb, ["/proc/y/no"])
+        self.assertEqual(d, fb)
+        os.environ["ANDROID_ROOT"] = "/system"
+        try:
+            self.assertTrue(compat.android_public_dirs("render")[0].endswith("Movies/ForgeCut"))
+            self.assertTrue(compat.default_out_dir("render", fb).startswith(("/storage", fb)))
+        finally:
+            os.environ.pop("ANDROID_ROOT")
+
+    def test_android_audio_player_never_crashes_without_plugin(self):
+        from forgecut.media.audio_play import FletAudioPlayer
+        pg = flet_stub.Page(); pg.services = []; pg.overlay = []
+        pl = FletAudioPlayer(pg)
+        pl.play("/x/a.wav")                                          # sin flet_audio instalado: solo guarda el error
+        self.assertTrue(pl.error); pl.stop()
+        import types
+        m = types.ModuleType("flet_audio"); m.Audio = lambda **k: flet_stub.Control(**k); sys.modules["flet_audio"] = m
+        try:
+            pl.play("/x/a.wav"); self.assertEqual(len(pg.services), 1)   # el servicio se añade (suena)
+            pl.stop(); self.assertEqual(len(pg.services), 0)             # y se quita (se detiene)
+        finally:
+            del sys.modules["flet_audio"]
+
     def test_deliver_render_uses_chosen_folder(self):
         from forgecut.ui.pages.deliver_page import DeliverPage
         dp = DeliverPage(self.s, flet_stub.Page())

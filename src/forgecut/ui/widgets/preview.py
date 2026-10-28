@@ -18,7 +18,7 @@ import time
 import flet as ft
 
 from ...core import editing as ed
-from ...media.audio_play import AudioPlayer, build_audio_mix
+from ...media.audio_play import AudioPlayer, FletAudioPlayer, build_audio_mix
 from .. import theme as T
 from ..compat import hard_clip, icon_btn, make_image, run_bg, safe_update, set_image_bytes, text, ui_call
 
@@ -56,7 +56,8 @@ class Preview:
         self._cache: dict = {}
         self._stream = None                     # {"clip": id, "src0": frame, "st": FrameStream}
         self._lock, self._busy, self._pending = __import__("threading").Lock(), False, None
-        self.audio = AudioPlayer()
+        self.audio = FletAudioPlayer(page) if __import__("os").environ.get("ANDROID_ROOT") else AudioPlayer()
+        self._aerr = False
         self._adir = None
         self._aend = None                       # frame donde termina el tramo de audio en curso
         self._anext = None                      # siguiente tramo ya mezclado: (ruta|None, frame_fin)
@@ -215,6 +216,11 @@ class Preview:
             return
         if path:
             self.audio.play(path)
+            err = getattr(self.audio, "error", "")
+            if err and not self._aerr:                       # avisa UNA vez si Android no puede reproducir
+                self._aerr = True
+                from ..compat import toast
+                toast(self.page, "Sin sonido: " + err[:90])
         self._aend = end
         self._kick_next()
 

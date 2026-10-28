@@ -53,6 +53,43 @@ def build_audio_mix(ffmpeg: str, project: Project, sf: int, ef: int, out_path: s
     return r.returncode == 0
 
 
+class FletAudioPlayer:
+    """Android: no hay winsound/ffplay. Reproduce el WAV mezclado con el plugin `flet-audio` (se añade como servicio de la
+    página y se quita para detenerlo). Si el plugin no está en el APK, `error` dice por qué y la app sigue sin sonido."""
+
+    def __init__(self, page):
+        self.page, self._a, self.error = page, None, ""
+
+    def play(self, wav: str) -> None:
+        self.stop()
+        try:
+            import flet_audio as fta
+            a = fta.Audio(src=wav, autoplay=True)
+            try:
+                self.page.services.append(a)
+            except Exception:
+                self.page.overlay.append(a)
+            self.page.update()
+            self._a, self.error = a, ""
+        except Exception as ex:                              # noqa: BLE001
+            self.error = f"{type(ex).__name__}: {ex}"
+            print("[audio]", self.error)
+
+    def stop(self) -> None:
+        a, self._a = self._a, None
+        if a is None:
+            return
+        for bag in (getattr(self.page, "services", None), getattr(self.page, "overlay", None)):
+            try:
+                bag.remove(a)
+            except Exception:
+                pass
+        try:
+            self.page.update()
+        except Exception:
+            pass
+
+
 class AudioPlayer:
     def __init__(self, ffmpeg: str = ""):
         self._proc = None
