@@ -10,7 +10,7 @@ on:
     inputs:
       android: { description: "Compilar Android (APK)", type: boolean, default: true }
       windows: { description: "Compilar Windows", type: boolean, default: true }
-      linux:   { description: "Compilar Linux", type: boolean, default: false }
+      linux:   { description: "Compilar Linux", type: boolean, default: true }
       macos:   { description: "Compilar macOS", type: boolean, default: false }
 
 concurrency:
