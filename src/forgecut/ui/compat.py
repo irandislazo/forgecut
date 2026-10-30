@@ -402,8 +402,131 @@ def default_out_dir(kind: str, data_dir: str) -> str:
     return private
 
 
+# ── explorador propio (Linux / Kaggle: no hay gestor de archivos nativo) ──
+def use_builtin_browser() -> bool:
+    import sys
+    return sys.platform.startswith("linux") and not os.environ.get("ANDROID_ROOT")
+
+
+def unique_file(path: str) -> str:
+    """Si `path` existe, devuelve «nombre_2.ext», «nombre_3.ext»… para no sobrescribir."""
+    base, ext = os.path.splitext(path)
+    n = 1
+    while os.path.exists(path):
+        n += 1
+        path = f"{base}_{n}{ext}"
+    return path
+
+
+def _start_dir(initial: Optional[str] = None) -> str:
+    for c in (initial, "/kaggle/working", os.path.expanduser("~"), "/"):
+        if c and os.path.isdir(c):
+            return c
+    return "/"
+
+
+async def browse(page: ft.Page, mode: str, title: str, exts: Optional[List[str]] = None, multiple: bool = False,
+                 initial: Optional[str] = None, filename: str = ""):
+    """mode: «files» | «dir» | «save». Devuelve lista (files), str (dir/save) o None/[] si se cancela."""
+    exts = [x.lstrip(".").lower() for x in (exts or [])]
+    st = {"cwd": _start_dir(initial if (initial and os.path.isdir(initial)) else (os.path.dirname(initial) if initial else None)),
+          "sel": []}
+    fut = asyncio.get_event_loop().create_future()
+    path_f = ft.TextField(dense=True, text_size=12, expand=True)
+    name_f = ft.TextField(value=filename, dense=True, text_size=12, label="Nombre de archivo", visible=mode == "save")
+    lst = ft.ListView(expand=True, spacing=0)
+    info = ft.Text("", size=11, color=T.TEXT_DIM)
+
+    def refresh(update=True):
+        d = st["cwd"]
+        path_f.value = d
+        rows = []
+        try:
+            names = sorted(os.listdir(d), key=lambda n: n.lower())
+        except OSError as ex:
+            names = []
+            info.value = f"No se puede abrir: {ex}"
+        dirs = [n for n in names if os.path.isdir(os.path.join(d, n)) and not n.startswith(".")]
+        files = [] if mode == "dir" else [n for n in names if os.path.isfile(os.path.join(d, n)) and not n.startswith(".")
+                                          and (not exts or n.rsplit(".", 1)[-1].lower() in exts)]
+
+        def row(n, is_dir):
+            full = os.path.join(d, n)
+            on = full in st["sel"]
+            return ft.Container(
+                content=ft.Row([ft.Icon(ft.Icons.FOLDER if is_dir else ft.Icons.INSERT_DRIVE_FILE_OUTLINED, size=16,
+                                        color=T.ACCENT if is_dir else T.TEXT_DIM), ft.Text(n, size=12, expand=True)], spacing=6),
+                padding=ft.padding.symmetric(horizontal=8, vertical=5), bgcolor=T.PANEL_2 if on else None,
+                on_click=(lambda e, p=full: go(p)) if is_dir else (lambda e, p=full, n=n: pick(p, n)))
+        rows = [row(n, True) for n in dirs] + [row(n, False) for n in files]
+        lst.controls = rows or [ft.Text("(vacío)", size=12, color=T.TEXT_DIM)]
+        if not info.value.startswith("No se puede"):
+            info.value = f"{len(st['sel'])} seleccionado(s)" if mode == "files" else ""
+        if update:
+            safe_update(path_f, lst, info, name_f)
+
+    def go(p):
+        st["cwd"] = p
+        if mode == "files":
+            pass
+        info.value = ""
+        refresh()
+
+    def pick(p, n):
+        if mode == "save":
+            name_f.value = n
+        elif multiple:
+            (st["sel"].remove if p in st["sel"] else st["sel"].append)(p)
+        else:
+            st["sel"] = [p]
+        refresh()
+
+    def up(e=None):
+        go(os.path.dirname(st["cwd"].rstrip("/")) or "/")
+
+    def goto(e=None):
+        v = (path_f.value or "").strip()
+        if os.path.isdir(v):
+            go(v)
+        else:
+            info.value = "No se puede abrir: carpeta inexistente"
+            refresh()
+
+    def done(val):
+        if not fut.done():
+            fut.set_result(val)
+        close_dialog(page, dlg)
+
+    def ok(e):
+        if mode == "dir":
+            done(st["cwd"])
+        elif mode == "save":
+            n = (name_f.value or "").strip()
+            if n:
+                done(unique_file(os.path.join(st["cwd"], n)))
+        else:
+            done(list(st["sel"]))
+
+    path_f.on_submit = goto
+    quick = [("/kaggle/working", "working"), ("/kaggle/input", "input"), (os.path.expanduser("~"), "Inicio"), ("/", "/")]
+    chips = [ft.TextButton(lbl, on_click=lambda e, p=p: go(p)) for p, lbl in quick if os.path.isdir(p)]
+    body = ft.Column([ft.Row([ft.IconButton(ft.Icons.ARROW_UPWARD, on_click=up, tooltip="Subir"), path_f,
+                              ft.IconButton(ft.Icons.ARROW_FORWARD, on_click=goto, tooltip="Ir")], spacing=2),
+                      ft.Row(chips, spacing=0, wrap=True),
+                      ft.Container(content=lst, expand=True, border=ft.border.all(1, T.PANEL_2)), info, name_f],
+                     spacing=4, width=560, height=460)
+    ok_lbl = {"dir": "Usar esta carpeta", "save": "Guardar", "files": "Abrir"}[mode]
+    dlg = ft.AlertDialog(modal=True, title=ft.Text(title), content=body, actions=[
+        ft.TextButton("Cancelar", on_click=lambda e: done(None)), ft.TextButton(ok_lbl, on_click=ok)])
+    refresh(False)
+    open_dialog(page, dlg)
+    return await fut
+
+
 async def pick_files(page: ft.Page, multiple: bool = True, exts: Optional[List[str]] = None,
                      title: str = "Selecciona archivos") -> List[str]:
+    if use_builtin_browser():
+        return await browse(page, "files", title, exts, multiple) or []
     try:
         p = _get_picker(page, "files")
         kw = {"allow_multiple": multiple, "dialog_title": title}
@@ -413,27 +536,30 @@ async def pick_files(page: ft.Page, multiple: bool = True, exts: Optional[List[s
         res = await p.pick_files(**kw)
         return [f.path for f in (res or []) if getattr(f, "path", None)]
     except Exception:
-        v = await ask_text(page, title, "Pega la ruta completa (varias separadas por ;)")
-        return [x.strip().strip('"') for x in v.split(";") if x.strip()] if v else []
+        return await browse(page, "files", title, exts, multiple) or []
 
 
 async def pick_dir(page: ft.Page, title: str = "Selecciona carpeta", initial: Optional[str] = None) -> Optional[str]:
+    if use_builtin_browser():
+        return await browse(page, "dir", title, initial=initial)
     try:
         kw = {"dialog_title": title}
         if initial and os.path.isdir(initial):
             kw["initial_directory"] = initial
         return await _get_picker(page, "dir").get_directory_path(**kw)
     except Exception:
-        return await ask_text(page, title, "Pega la ruta de la carpeta")
+        return await browse(page, "dir", title, initial=initial)
 
 
 async def pick_save(page: ft.Page, title: str, filename: str, ext: str) -> Optional[str]:
+    if use_builtin_browser():
+        return await browse(page, "save", title, [ext], filename=filename)
     try:
         p = await _get_picker(page, "save").save_file(dialog_title=title, file_name=filename,
                                               allowed_extensions=[ext.lstrip(".")])
         return p
     except Exception:
-        return await ask_text(page, title, "Ruta completa de destino", initial=filename)
+        return await browse(page, "save", title, [ext], filename=filename)
 
 
 # ── trabajo en segundo plano ───────────────────────────────────────

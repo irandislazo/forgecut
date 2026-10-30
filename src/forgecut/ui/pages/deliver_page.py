@@ -8,7 +8,7 @@ import time
 import flet as ft
 
 from .. import theme as T
-from ..compat import Choice, ask_text, btn, close_dialog, open_dialog, pick_dir, pick_save, safe_update, text, toast, writable_dir, android_public_dirs, default_out_dir
+from ..compat import Choice, ask_text, btn, close_dialog, open_dialog, pick_dir, pick_save, safe_update, text, toast, writable_dir, android_public_dirs, default_out_dir, unique_file
 
 
 # (clave, etiqueta, lado corto en px; None = tamaño original / borrador)
@@ -180,11 +180,11 @@ class DeliverPage:
         folder = (self.render_dir.value or "").strip()
         if folder:                                            # carpeta elegida: sin diálogo de «guardar como»
             folder, note = writable_dir(folder, os.path.join(self.s.data_dir, "render"), android_public_dirs("render"))
-            out = os.path.join(folder, fname)
+            out = unique_file(os.path.join(folder, fname))      # no sobrescribe: nombre_2.mp4, nombre_3.mp4…
             if note:
                 toast(self.page, note)
         else:
-            out = await pick_save(self.page, "Guardar vídeo", fname, "mp4") or default
+            out = await pick_save(self.page, "Guardar vídeo", fname, "mp4") or unique_file(default)
         self.bar.visible, self.bar.value = True, 0
         self.render_msg.value = "Renderizando…"
         safe_update(self.bar, self.render_msg)

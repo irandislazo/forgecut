@@ -9,8 +9,8 @@ import os
 import flet as ft
 
 from . import theme as T
-from .compat import (Choice, android_public_dirs, btn, default_out_dir, icon_btn, safe_update, text, toast,
-                     writable_dir)
+from .compat import (Choice, android_public_dirs, btn, default_out_dir, evt_dx, evt_dy, icon_btn, quiet, safe_update, text,
+                     toast, writable_dir)
 from .widgets.inspector import Inspector
 from .widgets.media_pool import MediaPool
 from .widgets.preview import Preview
@@ -140,14 +140,45 @@ class Workspace:
         self.pool_box = ft.Container(content=self.pool.root, width=300)
         self.inspector_box = ft.Container(content=self.inspector.root, width=320)
         self.preview_box = ft.Container(content=self.preview.root, expand=True)
-        self.top = ft.Row([self.pool_box, self.preview_box, self.inspector_box], spacing=2, expand=3)
-        self.bottom = ft.Column([self.toolbar.root, ft.Container(content=self.timeline.root, expand=True)], spacing=0, expand=2)
+        # Divisores arrastrables (escritorio): ancho de Medios/Inspector y alto del timeline
+        self.pool_w, self.insp_w, self.top_w = None, 320.0, 60
+        self.split_pool = self._splitter(True, lambda dx: self._resize_w("pool", dx))
+        self.split_insp = self._splitter(True, lambda dx: self._resize_w("insp", -dx))
+        self.split_tl = self._splitter(False, self._resize_h)
+        self.top = ft.Row([self.pool_box, self.split_pool, self.preview_box, self.split_insp, self.inspector_box], spacing=0, expand=self.top_w)
+        self.bottom = ft.Column([self.toolbar.root, ft.Container(content=self.timeline.root, expand=True)], spacing=0, expand=100 - self.top_w)
         # Modo compacto (móvil / ventana estrecha): una sola zona a la vez, elegida con este selector
+        self.page = page
         self.compact, self.panel, self.page_name = False, "preview", "edit"
         self.switch = Choice([("pool", "Medios"), ("preview", "Visor"), ("inspector", "Inspector")], "preview",
                              on_change=self._pick_panel)
         self.switch_row = ft.Container(content=self.switch.control, visible=False, padding=4, bgcolor=T.PANEL_2)
-        self.root = ft.Column([self.switch_row, self.top, self.bottom], spacing=2, expand=True)
+        self.root = ft.Column([self.switch_row, self.top, self.split_tl, self.bottom], spacing=0, expand=True)
+
+    def _splitter(self, vertical: bool, fn) -> ft.Control:
+        """Borde arrastrable entre paneles (cursor de redimensionar)."""
+        mc = getattr(ft, "MouseCursor", None)
+        cur = getattr(mc, "RESIZE_LEFT_RIGHT" if vertical else "RESIZE_UP_DOWN", None)
+        cur = None if isinstance(cur, str) else cur
+        box = ft.Container(bgcolor=T.PANEL_2, width=6 if vertical else None, height=None if vertical else 6)
+        kw = dict(on_horizontal_drag_update=lambda e: fn(evt_dx(e))) if vertical else dict(on_vertical_drag_update=lambda e: fn(evt_dy(e)))
+        for k, v in kw.items():
+            kw[k] = quiet(v)
+        return ft.GestureDetector(content=box, mouse_cursor=cur, drag_interval=30, **kw)
+
+    def _resize_w(self, which: str, dx: float) -> None:
+        if which == "pool":
+            cur = self.pool_w or (520 if self.page_name == "media" else 300)
+            self.pool_w = max(180.0, min(900.0, cur + dx))
+        else:
+            self.insp_w = max(200.0, min(700.0, self.insp_w + dx))
+        self._layout()
+
+    def _resize_h(self, dy: float) -> None:
+        h = float(getattr(self.page, "height", 0) or 900)
+        self.top_w = int(max(15, min(85, self.top_w + dy / h * 100)))
+        self.top.expand, self.bottom.expand = self.top_w, 100 - self.top_w
+        self._layout()
 
     def _pick_panel(self, key: str) -> None:
         self.panel = key
@@ -187,8 +218,11 @@ class Workspace:
         else:
             self.preview_box.visible = True
             self.pool_box.visible, self.inspector_box.visible = cfg["pool"], cfg["inspector"]
-            self.pool_box.width, self.pool_box.expand = (520 if self.page_name == "media" else 300), False
-            self.inspector_box.width, self.inspector_box.expand = 320, False
+            self.pool_box.width, self.pool_box.expand = (self.pool_w or (520 if self.page_name == "media" else 300)), False
+            self.inspector_box.width, self.inspector_box.expand = self.insp_w, False
             self.switch_row.visible = False
+        self.split_pool.visible = (not self.compact) and cfg["pool"]
+        self.split_insp.visible = (not self.compact) and cfg["inspector"]
         self.bottom.visible = cfg["timeline"]
+        self.split_tl.visible = cfg["timeline"] and not self.compact
         safe_update(self.root)
