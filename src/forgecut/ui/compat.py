@@ -431,7 +431,7 @@ async def browse(page: ft.Page, mode: str, title: str, exts: Optional[List[str]]
     exts = [x.lstrip(".").lower() for x in (exts or [])]
     st = {"cwd": _start_dir(initial if (initial and os.path.isdir(initial)) else (os.path.dirname(initial) if initial else None)),
           "sel": []}
-    fut = asyncio.get_event_loop().create_future()
+    fut = asyncio.get_running_loop().create_future()
     path_f = ft.TextField(dense=True, text_size=12, expand=True)
     name_f = ft.TextField(value=filename, dense=True, text_size=12, label="Nombre de archivo", visible=mode == "save")
     lst = ft.ListView(expand=True, spacing=0)
@@ -456,7 +456,7 @@ async def browse(page: ft.Page, mode: str, title: str, exts: Optional[List[str]]
             return ft.Container(
                 content=ft.Row([ft.Icon(ft.Icons.FOLDER if is_dir else ft.Icons.INSERT_DRIVE_FILE_OUTLINED, size=16,
                                         color=T.ACCENT if is_dir else T.TEXT_DIM), ft.Text(n, size=12, expand=True)], spacing=6),
-                padding=ft.padding.symmetric(horizontal=8, vertical=5), bgcolor=T.PANEL_2 if on else None,
+                padding=6, bgcolor=T.PANEL_2 if on else None,
                 on_click=(lambda e, p=full: go(p)) if is_dir else (lambda e, p=full, n=n: pick(p, n)))
         rows = [row(n, True) for n in dirs] + [row(n, False) for n in files]
         lst.controls = rows or [ft.Text("(vacío)", size=12, color=T.TEXT_DIM)]
@@ -513,7 +513,7 @@ async def browse(page: ft.Page, mode: str, title: str, exts: Optional[List[str]]
     body = ft.Column([ft.Row([ft.IconButton(ft.Icons.ARROW_UPWARD, on_click=up, tooltip="Subir"), path_f,
                               ft.IconButton(ft.Icons.ARROW_FORWARD, on_click=goto, tooltip="Ir")], spacing=2),
                       ft.Row(chips, spacing=0, wrap=True),
-                      ft.Container(content=lst, expand=True, border=ft.border.all(1, T.PANEL_2)), info, name_f],
+                      ft.Container(content=lst, expand=True, bgcolor=T.PANEL), info, name_f],
                      spacing=4, width=560, height=460)
     ok_lbl = {"dir": "Usar esta carpeta", "save": "Guardar", "files": "Abrir"}[mode]
     dlg = ft.AlertDialog(modal=True, title=ft.Text(title), content=body, actions=[
