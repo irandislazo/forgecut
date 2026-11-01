@@ -67,11 +67,17 @@ class _Inputs:
     def __init__(self, fps: int):
         self.fps, self.paths, self.args = fps, {}, []
 
-    def idx(self, path: str, image: bool = False) -> int:
-        if path not in self.paths:
-            self.paths[path] = len(self.paths)
-            self.args += (["-loop", "1", "-framerate", str(self.fps)] if image else []) + ["-i", path]
-        return self.paths[path]
+    def idx(self, path: str, image: bool = False, ss: float = 0.0, t: Optional[float] = None) -> int:
+        """Cada uso abre su propia entrada con -ss/-t: reutilizar una misma entrada en decenas de
+        segmentos obliga a ffmpeg a acumular fotogramas en RAM (se cae por memoria al renderizar)."""
+        n = self.n = getattr(self, "n", -1) + 1
+        pre = (["-loop", "1", "-framerate", str(self.fps)] if image else [])
+        if ss > 0 and not image:
+            pre += ["-ss", f"{ss:.6f}"]
+        if t is not None:
+            pre += ["-t", f"{t:.6f}"]
+        self.args += pre + ["-i", path]
+        return n
 
 
 def build_filtergraph(project: Project, proxy: bool = False, short_side: Optional[int] = None) -> Tuple[List[str], str, float]:
@@ -101,8 +107,9 @@ def build_filtergraph(project: Project, proxy: bool = False, short_side: Optiona
                 continue
             src_f = c.source_in + int(round((a - c.start) * c.speed))
             ss, use = src_f / fps, d * c.speed
-            n = inp.idx(asset.path, image=(asset.kind == "image"))
-            ch = [f"trim=start={ss:.6f}:duration={use:.6f}", f"setpts=(PTS-STARTPTS)/{c.speed:.6f}", f"fps={fps}"]
+            is_img = asset.kind == "image"
+            n = inp.idx(asset.path, image=is_img, ss=ss, t=use + 0.5)
+            ch = [f"trim=start=0:duration={use:.6f}", f"setpts=(PTS-STARTPTS)/{c.speed:.6f}", f"fps={fps}"]
             if tr.crop_l or tr.crop_r or tr.crop_t or tr.crop_b:
                 ch.append(f"crop=iw*{1 - tr.crop_l - tr.crop_r:.6f}:ih*{1 - tr.crop_t - tr.crop_b:.6f}:"
                           f"iw*{tr.crop_l:.6f}:ih*{tr.crop_t:.6f}")
@@ -133,8 +140,9 @@ def build_filtergraph(project: Project, proxy: bool = False, short_side: Optiona
             if not asset or not c.enabled or c.mute or c.volume <= 0:
                 continue
             if t.kind == "audio" or (t.kind == "video" and not t.hidden and asset.has_audio and asset.kind == "video"):
-                n = inp.idx(asset.path)
                 ss, use = c.source_in / fps, c.duration * c.speed / fps
+                n = inp.idx(asset.path, ss=ss, t=use + 0.5)
+                ss = 0.0
                 ms = int(round(c.start / fps * 1000))
                 chain = [f"atrim=start={ss:.6f}:duration={use:.6f}", "asetpts=PTS-STARTPTS"]
                 if abs(c.speed - 1.0) > 1e-6:
@@ -180,7 +188,7 @@ def render_project(backend, project: Project, out_path: str,
         p.wait()
         if p.returncode != 0:
             err.seek(0)
-            raise RuntimeError("Render falló:\n" + err.read().decode("utf-8", "replace")[-1500:])
+            raise RuntimeError(f"Render falló (código {p.returncode}):\n" + err.read().decode("utf-8", "replace")[-3000:])
         if progress:
             progress(1.0)
         return out_path
