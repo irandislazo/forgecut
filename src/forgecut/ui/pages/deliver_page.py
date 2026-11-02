@@ -33,7 +33,7 @@ class DeliverPage:
         self.info = text("", 12, T.TEXT_DIM)
         self.audio_msg = text("", 12, T.TEXT_DIM)
         self.bar = ft.ProgressBar(value=0, visible=False)
-        self.render_msg = text("", 12, T.TEXT_DIM)
+        self.render_msg = text("", 12, T.TEXT_DIM, selectable=True)     # seleccionable: se puede copiar el error
         card = lambda title, *ctrls: ft.Container(bgcolor=T.PANEL_2, border_radius=6, padding=14,
                                                   content=ft.Column([text(title, 14, bold=True), *ctrls], spacing=10))
         self.root = ft.Container(bgcolor=T.PANEL, padding=16, expand=True, content=ft.Column([
@@ -195,7 +195,8 @@ class DeliverPage:
         try:
             short = dict((k, v) for k, _l, v in PRESETS).get(self.res.value)
             await asyncio.to_thread(self.s.render, out, self.res.value == "draft", progress, short, int(self.crf.value))
-            self.render_msg.value = f"✔ {out}"
+            notes = getattr(self.s.backend, "last_render_notes", None) or []
+            self.render_msg.value = f"✔ {out}" + "".join(f"\n⚠ {n}" for n in notes)
         except Exception as ex:
             self.render_msg.value = f"❌ {ex}"
         self.bar.visible = False

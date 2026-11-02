@@ -73,3 +73,17 @@ class TestPackaging(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestIcon(unittest.TestCase):
+    def test_icon_is_where_flet_build_looks_for_it(self):
+        """Flet busca el icono en <app>/assets (aquí src/assets), no en assets/ de la raíz del repo."""
+        import struct
+        p = os.path.join(ROOT, "src", "assets", "icon.png")
+        self.assertTrue(os.path.exists(p), "falta src/assets/icon.png")
+        d = open(p, "rb").read(32)
+        self.assertEqual(d[:8], b"\x89PNG\r\n\x1a\n")
+        w, h = struct.unpack(">II", d[16:24])
+        self.assertEqual(w, h, "el icono debe ser cuadrado")
+        self.assertGreaterEqual(w, 512)
+        self.assertFalse(os.path.exists(os.path.join(ROOT, "assets", "icon_android.png")), "icono fuera de src: Flet no lo ve")

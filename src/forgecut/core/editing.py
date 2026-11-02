@@ -197,12 +197,20 @@ def close_gaps(tl: Timeline, track_id: str) -> None:
         t = c.end
 
 
+_CROP_OPPOSITE = {"crop_l": "crop_r", "crop_r": "crop_l", "crop_t": "crop_b", "crop_b": "crop_t"}
+_CROP_MAX_SUM = 0.9
+
+
 def set_clip_props(tl: Timeline, clip_id: str, **props) -> Clip:
     """Edita propiedades del inspector. Acepta claves 'transform.<campo>'."""
     _tr, c = find_clip(tl, clip_id)
     for k, v in props.items():
         if k.startswith("transform."):
-            setattr(c.transform, k.split(".", 1)[1], v)
+            field_name = k.split(".", 1)[1]
+            other = _CROP_OPPOSITE.get(field_name)
+            if other is not None:                    # izq+der / arriba+abajo nunca dejan el clip sin imagen
+                v = max(0.0, min(float(v), _CROP_MAX_SUM - getattr(c.transform, other)))
+            setattr(c.transform, field_name, v)
         elif k in ("start", "duration", "source_in"):
             setattr(c, k, max(0 if k != "duration" else 1, int(v)))
         elif hasattr(c, k):

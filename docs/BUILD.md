@@ -8,6 +8,13 @@ python -m unittest discover -s tests          # 100+ tests; los de medios usan f
 cd src ; flet run main.py
 ```
 
+## Icono de la app
+Flet busca el icono en la carpeta **`assets` dentro del directorio de la app** (aquí `src/assets/`, porque
+`[tool.flet.app] path = "src"`), **no** en `assets/` de la raíz del repositorio. Este proyecto usa
+`src/assets/icon.png` (se aplica a todas las plataformas; Android usa `icon_android.png` si existe y si no `icon.png`).
+Para cambiarlo, sustituye ese archivo (PNG cuadrado, ≥ 512 px; 1024 px ideal para macOS/iOS).
+En el log de `flet build ... --verbose` debe aparecer: `Found "icon" image at ...src/assets/icon.png`.
+
 ## 1. Windows
 
 ### Opción A — en tu PC
