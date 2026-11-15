@@ -4,7 +4,7 @@ from __future__ import annotations
 import flet as ft
 
 from .. import theme as T
-from ..compat import btn, icon_btn, safe_update, text
+from ..compat import tfield, btn, icon_btn, safe_update, text
 
 
 def _num(v, default, cast=float):
@@ -30,7 +30,7 @@ class Inspector:
         def apply(e):
             if str(e.control.value) != str(value):        # sin cambio real no se edita (evita bucles blur→editar→reconstruir)
                 on_apply(e.control.value)
-        tf = ft.TextField(label=label, value=str(value), width=width, dense=True, text_size=12,
+        tf = tfield(label=label, value=str(value), width=T.sc(width), dense=True, text_size=12,
                           on_submit=apply, on_blur=apply)
         return tf
 

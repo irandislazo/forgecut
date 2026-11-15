@@ -5,6 +5,7 @@ import asyncio
 import inspect
 import os
 import time
+from typing import Optional
 
 import flet as ft
 
@@ -12,7 +13,7 @@ from ..core.project_io import EXT
 from . import theme as T
 import threading
 
-from .compat import (ask_text, btn, close_dialog, icon_btn, no_auto_update, open_dialog, pick_files, safe_update,
+from .compat import (TEXT_FOCUS, Choice, detect_ui_scale, load_prefs, save_prefs, ask_text, btn, close_dialog, icon_btn, no_auto_update, open_dialog, pick_files, safe_update,
                      text, toast, ui_call)
 from .pages.deliver_page import DeliverPage
 from .pages.templates_page import TemplatesPage
@@ -32,14 +33,20 @@ def _diag() -> str:
         return ""
 
 
-def main(page: ft.Page) -> None:
+def main(page: ft.Page, reopen: Optional[str] = None) -> None:
     page.title = "ForgeCut"
     page.theme_mode = ft.ThemeMode.DARK
     page.bgcolor = T.BG
     page.padding = 0
     page.spacing = 0
+    T.SCALE = detect_ui_scale()                          # pantallas pequeñas: botones, letras y paneles más compactos
     try:
-        page.window.width, page.window.height = 1500, 900
+        page.theme = ft.Theme(visual_density=ft.VisualDensity.COMPACT)
+    except Exception:
+        pass
+    try:
+        if reopen is None:                               # al reaplicar la escala se conserva el tamaño de ventana actual
+            page.window.width, page.window.height = T.sc(1500), T.sc(900)
     except Exception:
         pass
 
@@ -143,7 +150,11 @@ def main(page: ft.Page) -> None:
             state.project.name = name.strip()
         do_save()
 
+    last_key = {"t": 0.0}
+
     def on_save(e=None) -> None:
+        if e is not None and time.monotonic() - last_key["t"] < 0.5:
+            return                                              # Espacio/Intro/Tab sobre el botón enfocado NO guardan: solo Ctrl+S o un clic
         if state.project_path is None:                          # primer guardado: pide el nombre
             page.run_task(save_named)
         else:
@@ -154,12 +165,45 @@ def main(page: ft.Page) -> None:
         if name and name.strip():
             state.rename_project(name)
 
+    def apply_scale(v: float) -> None:
+        """Guarda la escala (0 = automática) y reconstruye la interfaz al instante con el mismo proyecto."""
+        save_prefs(ui_scale=v)
+        path = state.project_path
+        if path is None or state.dirty:
+            try:
+                path = state.save()                          # nada se pierde: el proyecto se guarda y se vuelve a abrir
+            except Exception:
+                path = None
+        try:
+            page.clean()
+        except Exception:
+            page.controls.clear()
+        main(page, path or "")
+
+    def cycle_scale() -> None:
+        """Miniventana «Tamaño de la interfaz»: se aplica al momento y se puede volver a Automático o a cualquier valor."""
+        opts = [(0.0, "Automático"), (0.7, "70 %"), (0.8, "80 %"), (0.9, "90 %"), (1.0, "100 %"), (1.15, "115 %"), (1.3, "130 %")]
+        cur = load_prefs().get("ui_scale") or 0.0
+        dlg = ft.AlertDialog(modal=False, title=ft.Text("Tamaño de la interfaz"))
+
+        def pick(k):
+            close_dialog(page, dlg)
+            apply_scale(float(k))
+        ch = Choice([(str(v), lab) for v, lab in opts], str(min((v for v, _ in opts), key=lambda v: abs(v - float(cur)))),
+                    on_change=pick)
+        dlg.content = ft.Container(width=340, content=ft.Column([
+            text(f"Ahora: {int(round(T.SCALE * 100))} %" + (" (automático)" if not cur else ""), 11, T.TEXT_DIM), ch.control,
+            text("Se aplica al instante; el proyecto se guarda y se reabre.", 10, T.TEXT_DIM)], spacing=6, tight=True))
+        dlg.actions = [ft.TextButton("Cerrar", on_click=lambda e: close_dialog(page, dlg))]
+        open_dialog(page, dlg)
+
     topbar = ft.Container(bgcolor=T.PANEL, padding=6,
                           content=ft.Row([text("ForgeCut", 15, T.ACCENT, bold=True),
                                           ft.Container(content=title, on_click=lambda e: page.run_task(rename_title),
                                                        tooltip="Cambiar nombre del proyecto"), ft.Container(expand=True),
                                           btn("Nuevo", lambda e: page.run_task(new_named), "NOTE_ADD"),
-                                          btn("Abrir", on_open, "FOLDER_OPEN"), btn("Guardar", on_save, "SAVE"),
+                                          btn("Abrir", on_open, "FOLDER_OPEN"), btn("Guardar", on_save, "SAVE", tooltip="Guardar (Ctrl+S)"),
+                          icon_btn("FORMAT_SIZE", lambda e: cycle_scale(), "Tamaño de la interfaz (Automático, 70–130 %)", 16, T.TEXT_DIM),
                                           icon_btn("UNDO", lambda e: state.undo(), "Deshacer"),
                                           icon_btn("REDO", lambda e: state.redo(), "Rehacer")], spacing=6))
 
@@ -177,6 +221,8 @@ def main(page: ft.Page) -> None:
     def on_key(e) -> None:
         k = (getattr(e, "key", "") or "").lower()
         ctrl, shift = bool(getattr(e, "ctrl", False) or getattr(e, "meta", False)), bool(getattr(e, "shift", False))
+        if k in (" ", "enter", "tab", "numpad enter"):
+            last_key["t"] = time.monotonic()
         if shift or k in ("shift left", "shift right", "shift"):
             state.note_shift()                                  # Shift+clic = rango en el Media Pool
         elif k not in ("control left", "control right", "control", "meta left", "meta right", "meta", "alt left", "alt right", "alt"):
@@ -187,7 +233,11 @@ def main(page: ft.Page) -> None:
                 return
         elif not ctrl and k not in ("shift left", "shift right", "alt left", "alt right", "shift", "alt"):
             state.release_ctrl()                                # Flet no avisa al soltar Ctrl: otra tecla lo implica
-        if k == " ":
+        if k == "escape":
+            TEXT_FOCUS[0] = False
+        if TEXT_FOCUS[0] and not (ctrl and k == "s"):
+            return                                              # escribiendo en un campo: Supr/Retroceso/espacio editan el texto
+        if k in (" ", "tab"):
             ws.preview.toggle_play()
         elif ctrl and k == "z":
             state.undo()
@@ -270,3 +320,8 @@ def main(page: ft.Page) -> None:
     on_state("all")
     show("edit")
     on_resize()
+    if reopen:
+        try:
+            state.open(reopen)
+        except Exception as ex:
+            toast(page, f"No se pudo reabrir el proyecto: {ex}")

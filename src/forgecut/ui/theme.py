@@ -13,3 +13,16 @@ TRACK_V = "#26262a"
 TRACK_A = "#222a26"
 RULER = "#1f1f22"
 CLIP_DEFAULT = "#64748b"
+
+# Escala de la interfaz (pantallas pequeñas: 1366×768, 1280×720…). La fija app.main antes de construir los paneles.
+SCALE = 1.0
+
+
+def sc(n: float) -> int:
+    """Tamaño (px) escalado."""
+    return max(1, int(round(n * SCALE)))
+
+
+def fs(n: float) -> int:
+    """Tamaño de letra escalado (nunca menor de 8)."""
+    return max(8, int(round(n * SCALE)))

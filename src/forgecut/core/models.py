@@ -37,6 +37,8 @@ class MediaAsset:
     fps: float = 0.0
     has_audio: bool = False
     bin_id: Optional[str] = None   # carpeta del Media Pool (None = raíz)
+    created: float = 0.0           # fecha de creación del archivo (epoch; 0 = aún no leída)
+    modified: float = 0.0          # fecha de modificación del archivo (epoch)
 
     @classmethod
     def from_dict(cls, d: dict) -> "MediaAsset":

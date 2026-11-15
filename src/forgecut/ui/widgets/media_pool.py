@@ -10,19 +10,22 @@ from __future__ import annotations
 
 import asyncio
 import struct
+import time
 import traceback
 
 import flet as ft
 
 from ...media.visuals import thumbs_count
 from .. import theme as T
-from ..compat import (ask_text, btn, close_dialog, draggable, file_image, hard_clip, icon_btn, open_dialog, pick_files,
+from ..compat import (Choice, tfield, ask_text, btn, close_dialog, draggable, file_image, hard_clip, icon_btn, open_dialog, pick_files,
                       quiet, safe_update, text, toast)
 
 MEDIA_EXT = ["mp4", "mov", "mkv", "avi", "webm", "m4v", "mp3", "wav", "m4a", "aac", "flac", "ogg", "png", "jpg", "jpeg"]
 ICONS = {"video": "MOVIE", "audio": "AUDIOTRACK", "image": "IMAGE"}
 SEL_BG = "#24406b"
-SORTS = [("name", "nombre"), ("duration", "duración"), ("kind", "tipo"), ("added", "orden de importación")]
+SORTS = [("name", "Nombre"), ("duration", "Duración"), ("kind", "Tipo"), ("added", "Importación"),
+         ("created", "Creación"), ("modified", "Modificación")]
+DATE_SORTS = {"created": 0, "modified": 1}
 
 
 def _png_size(path: str):
@@ -62,8 +65,8 @@ class MediaPool:
         self.none_btn = icon_btn("DESELECT", lambda e: self.s.pool_clear(), "Deseleccionar todo", 18, T.TEXT_DIM)
         self.view_btn = icon_btn("GRID_VIEW", self._toggle_view, "Vista de miniaturas / lista", 18, T.TEXT_DIM)
         self.multi_btn = icon_btn("CHECKLIST", self._toggle_multi, "Modo selección: cada toque suma o quita", 18, T.TEXT_DIM)
-        self.sort_btn = icon_btn("SORT", self._cycle_sort, "Ordenar", 18, T.TEXT_DIM)
-        self.search = ft.TextField(hint_text="Buscar en todo el Media Pool…", dense=True, text_size=12, expand=True,
+        self.sort_btn = icon_btn("SORT", self._sort_dialog, "Ordenar por nombre, fechas de creación/modificación…", 18, T.TEXT_DIM)
+        self.search = tfield(hint_text="Buscar en todo el Media Pool…", dense=True, text_size=12, expand=True,
                                    on_change=self._on_search)
         self.selbar = ft.Container(visible=False, bgcolor=T.PANEL_3, padding=6, border_radius=4)
         header = ft.Row([text("Media Pool", 14, bold=True), ft.Container(expand=True), self.all_btn, self.none_btn, self.view_btn, self.multi_btn,
@@ -204,8 +207,31 @@ class MediaPool:
 
     def _cycle_sort(self, e=None) -> None:
         keys = [k for k, _ in SORTS]
-        self.s.pool_sort = keys[(keys.index(self.s.pool_sort) + 1) % len(keys)]
+        self.s.pool_sort, self.s.pool_desc = keys[(keys.index(self.s.pool_sort) + 1) % len(keys)], None
         self.refresh()
+
+    def _sort_dialog(self, e=None) -> None:
+        """Miniventana de orden: criterio (nombre, fechas, duración…) y sentido."""
+        s = self.s
+
+        def pick(k):
+            s.pool_sort = k
+            s.pool_desc = None                                         # sentido por defecto del criterio nuevo
+            direction.value = "desc" if s.pool_is_desc() else "asc"
+            direction._build()
+            safe_update(direction.control)
+            self.refresh()
+
+        def flip(k):
+            s.pool_desc = k == "desc"
+            self.refresh()
+        by = Choice(SORTS, s.pool_sort, on_change=pick)
+        direction = Choice([("asc", "↑ Ascendente"), ("desc", "↓ Descendente")], "desc" if s.pool_is_desc() else "asc", on_change=flip)
+        dlg = ft.AlertDialog(modal=False, title=ft.Text("Ordenar medios"), content=ft.Container(
+            width=320, content=ft.Column([text("Ordenar por", 11, T.TEXT_DIM), by.control, text("Sentido", 11, T.TEXT_DIM),
+                                          direction.control], spacing=6, tight=True)))
+        dlg.actions = [ft.TextButton("Cerrar", on_click=lambda e: close_dialog(self.page, dlg))]
+        open_dialog(self.page, dlg)
 
     def _on_search(self, e) -> None:
         self.s.pool_query = getattr(getattr(e, "control", None), "value", "") or ""
@@ -256,6 +282,9 @@ class MediaPool:
         t = f"{a.duration_s:.1f}s" + (f" · {a.width}×{a.height}" if a.width else "")
         if (self.s.pool_query or "").strip() and a.bin_id:
             t += "  ·  📁 " + " / ".join(b.name for b in self.s.bin_path(a.bin_id))
+        if self.s.pool_sort in DATE_SORTS:                       # al ordenar por fecha se muestra esa fecha
+            ts = self.s.asset_dates(a)[DATE_SORTS[self.s.pool_sort]]
+            t += "  ·  " + (time.strftime("%d/%m/%y %H:%M", time.localtime(ts)) if ts else "sin fecha")
         used = self.s.asset_usage(a.id)
         return t + (f"  ·  en timeline ×{used}" if used else "")
 
@@ -296,7 +325,7 @@ class MediaPool:
                      icon_btn("DELETE", lambda e, i=a.id: self.page.run_task(self.delete_items, [i]), "Quitar del Media Pool", 16, T.TEXT_DIM)]
         row = ft.Container(bgcolor=SEL_BG if sel else T.PANEL_2, border_radius=4, padding=6,
                            on_click=lambda e, i=a.id: self._click(i, order),
-                           content=ft.Row([self._check(a.id, order, sel), self._thumb(a, 46, 28),
+                           content=ft.Row([self._check(a.id, order, sel), self._thumb(a, T.sc(46), T.sc(28)),
                                            ft.Column([text(a.name, 12, no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS),
                                                       text(self._info(a), 10, T.TEXT_DIM, no_wrap=True,
                                                            overflow=ft.TextOverflow.ELLIPSIS)], spacing=0, expand=True),
@@ -308,10 +337,10 @@ class MediaPool:
         s = self.s
         sel = b.id in s.pool_sel
         n = len(s.assets_in(b.id)) + len(s.bins_in(b.id))
-        card = ft.Container(width=104, bgcolor=SEL_BG if sel else T.PANEL_3, border_radius=4, padding=4,
+        card = ft.Container(width=T.sc(104), bgcolor=SEL_BG if sel else T.PANEL_3, border_radius=4, padding=4,
                             on_click=lambda e, i=b.id: self._click(i, order, True),
                             content=ft.Column([ft.Container(content=ft.Icon(ft.Icons.FOLDER, size=34, color="#e0a13a"),
-                                                            width=96, height=54, alignment=_center()),
+                                                            width=T.sc(96), height=T.sc(54), alignment=_center()),
                                                text(b.name, 11, bold=True, no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS),
                                                text(f"{n} elemento(s)", 10, T.TEXT_DIM)], spacing=2))
         return self._folder_target(self._wrap_drag(card, b.id), b.id)
@@ -319,11 +348,11 @@ class MediaPool:
     def _asset_card(self, a, order):
         s = self.s
         sel = a.id in s.pool_sel
-        card = ft.Container(width=104, bgcolor=SEL_BG if sel else T.PANEL_2, border_radius=4, padding=4,
+        card = ft.Container(width=T.sc(104), bgcolor=SEL_BG if sel else T.PANEL_2, border_radius=4, padding=4,
                             on_click=lambda e, i=a.id: self._click(i, order),
-                            content=ft.Column([self._thumb(a, 96, 54),
+                            content=ft.Column([self._thumb(a, T.sc(96), T.sc(54)),
                                                text(a.name, 11, no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS),
-                                               text(f"{a.duration_s:.1f}s", 10, T.TEXT_DIM)], spacing=2))
+                                               text(self._info(a).split("  ·  ")[0] if self.s.pool_sort not in DATE_SORTS else time.strftime("%d/%m/%y", time.localtime(self.s.asset_dates(a)[DATE_SORTS[self.s.pool_sort]] or 0)), 10, T.TEXT_DIM)], spacing=2))
         return self._wrap_drag(card, a.id)
 
     # ── barra de selección ─────────────────────────────────────────
@@ -403,7 +432,7 @@ class MediaPool:
             self._selbar(order)
             self.view_btn.icon = _ico("VIEW_LIST" if s.pool_view == "grid" else "GRID_VIEW")
             self.multi_btn.icon_color = T.ACCENT_2 if s.pool_multi else T.TEXT_DIM
-            self.sort_btn.tooltip = "Orden: " + dict(SORTS).get(s.pool_sort, s.pool_sort) + " (clic para cambiar)"
+            self.sort_btn.tooltip = "Orden: " + dict(SORTS).get(s.pool_sort, s.pool_sort).lower() + (" ↓" if s.pool_is_desc() else " ↑") + " (clic para cambiar)"
             self.status.value = f"{len(bins)} carpeta(s) · {len(assets)} medio(s)" + (" · búsqueda en todo el pool" if searching else "")
         except Exception as ex:                                      # noqa: BLE001
             traceback.print_exc()

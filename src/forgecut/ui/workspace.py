@@ -9,7 +9,7 @@ import os
 import flet as ft
 
 from . import theme as T
-from .compat import (Choice, android_public_dirs, btn, default_out_dir, evt_dx, evt_dy, icon_btn, quiet, safe_update, text,
+from .compat import (Choice, tfield, android_public_dirs, btn, default_out_dir, evt_dx, evt_dy, icon_btn, quiet, safe_update, text,
                      toast, writable_dir)
 from .widgets.inspector import Inspector
 from .widgets.media_pool import MediaPool
@@ -20,9 +20,9 @@ from .widgets.timeline_view import TimelineView
 class Toolbar:
     def __init__(self, state, page: ft.Page):
         self.s, self.page = state, page
-        self.thr = ft.TextField(value="0.30", width=60, dense=True, text_size=12, tooltip="Sensibilidad de escenas (0.1–0.9)")
+        self.thr = tfield(value="0.30", width=T.sc(60), dense=True, text_size=12, tooltip="Sensibilidad de escenas (0.1–0.9)")
         self.viewport = lambda: 800.0                  # ancho visible del timeline (lo fija el Workspace)
-        self.zoom = ft.Slider(min=0.0, max=1.0, value=0.5, width=140, on_change=self._slide)
+        self.zoom = ft.Slider(min=0.0, max=1.0, value=0.5, width=T.sc(140), on_change=self._slide)
         self.tool_btns = {}
         self.fmt = Choice([("mp3", "MP3"), ("wav", "WAV")], "mp3")
         self.row = ft.Row(spacing=0, vertical_alignment=ft.CrossAxisAlignment.CENTER, wrap=False)
@@ -137,11 +137,11 @@ class Workspace:
         self.inspector = Inspector(state)
         self.timeline = TimelineView(state)
         self.toolbar = Toolbar(state, page)
-        self.pool_box = ft.Container(content=self.pool.root, width=300)
-        self.inspector_box = ft.Container(content=self.inspector.root, width=320)
+        self.pool_box = ft.Container(content=self.pool.root, width=T.sc(300))
+        self.inspector_box = ft.Container(content=self.inspector.root, width=T.sc(320))
         self.preview_box = ft.Container(content=self.preview.root, expand=True)
         # Divisores arrastrables (escritorio): ancho de Medios/Inspector y alto del timeline
-        self.pool_w, self.insp_w, self.top_w = None, 320.0, 60
+        self.pool_w, self.insp_w, self.top_w = None, float(T.sc(320)), 60
         self.split_pool = self._splitter(True, lambda dx: self._resize_w("pool", dx))
         self.split_insp = self._splitter(True, lambda dx: self._resize_w("insp", -dx))
         self.split_tl = self._splitter(False, self._resize_h)
@@ -168,7 +168,7 @@ class Workspace:
 
     def _resize_w(self, which: str, dx: float) -> None:
         if which == "pool":
-            cur = self.pool_w or (520 if self.page_name == "media" else 300)
+            cur = self.pool_w or T.sc(520 if self.page_name == "media" else 300)
             self.pool_w = max(180.0, min(900.0, cur + dx))
         else:
             self.insp_w = max(200.0, min(700.0, self.insp_w + dx))
@@ -201,7 +201,7 @@ class Workspace:
         if compact != self.compact:
             self.compact = compact
             self._set_switch("pool" if (compact and self.page_name == "media") else "preview")
-        self.preview.resize(min(560, int(w) - 24) if compact else 560)
+        self.preview.resize(min(T.sc(560), int(w) - 24) if compact else T.sc(560))
         self.timeline.viewport_w = max(0.0, float(w) - 100.0)
         self.toolbar.viewport = lambda: self.timeline.viewport_w
         self.toolbar.sync_zoom()
@@ -218,7 +218,7 @@ class Workspace:
         else:
             self.preview_box.visible = True
             self.pool_box.visible, self.inspector_box.visible = cfg["pool"], cfg["inspector"]
-            self.pool_box.width, self.pool_box.expand = (self.pool_w or (520 if self.page_name == "media" else 300)), False
+            self.pool_box.width, self.pool_box.expand = (self.pool_w or T.sc(520 if self.page_name == "media" else 300)), False
             self.inspector_box.width, self.inspector_box.expand = self.insp_w, False
             self.switch_row.visible = False
         self.split_pool.visible = (not self.compact) and cfg["pool"]

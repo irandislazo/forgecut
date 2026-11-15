@@ -9,7 +9,7 @@ import flet as ft
 
 from ...automation.templates import STYLES, Template, pool_keys, pool_label
 from .. import theme as T
-from ..compat import Choice, btn, icon_btn, pick_files, safe_update, text, toast
+from ..compat import Choice, tfield, btn, icon_btn, pick_files, safe_update, text, toast
 
 VIDEO_EXT = ["mp4", "mov", "mkv", "avi", "webm", "m4v"]
 AUDIO_EXT = ["mp3", "wav", "m4a", "aac", "flac", "ogg"]
@@ -21,7 +21,7 @@ class TemplatesPage:
         self.tpl: Optional[Template] = None
         self.expanded: set = set()
         self.song_path: Optional[str] = None
-        self.new_name = ft.TextField(label="Nombre de la plantilla", dense=True, width=240, text_size=12)
+        self.new_name = tfield(label="Nombre de la plantilla", dense=True, width=240, text_size=12)
         self.new_style = Choice([(k, v) for k, v in STYLES.items()], "la_voz")
         self.list_col = ft.Column(spacing=2, scroll=ft.ScrollMode.AUTO, expand=True)
         self.editor = ft.Column(spacing=8, scroll=ft.ScrollMode.AUTO, expand=True)
@@ -110,11 +110,11 @@ class TemplatesPage:
                     pass
             return f
         params = ft.Row([
-            ft.TextField(label="Duración lejanos (s)", value=str(t.far_s), width=150, dense=True, text_size=12,
+            tfield(label="Duración lejanos (s)", value=str(t.far_s), width=150, dense=True, text_size=12,
                          on_submit=setnum("far_s", 1.5, 5.0), on_blur=setnum("far_s", 1.5, 5.0)),
-            ft.TextField(label="Intro (s)", value=str(t.intro_s), width=110, dense=True, text_size=12,
+            tfield(label="Intro (s)", value=str(t.intro_s), width=110, dense=True, text_size=12,
                          on_submit=setnum("intro_s", 0, 90), on_blur=setnum("intro_s", 0, 90)) if t.style == "la_voz" else ft.Container(),
-            ft.TextField(label="Hueco lipsync (s)", value=str(t.lipsync_s), width=140, dense=True, text_size=12,
+            tfield(label="Hueco lipsync (s)", value=str(t.lipsync_s), width=140, dense=True, text_size=12,
                          on_submit=setnum("lipsync_s", 3, 30), on_blur=setnum("lipsync_s", 3, 30))], spacing=8, run_spacing=8, wrap=True)
         rows = [self._pool_row(k) for k in pool_keys(t.style)]
         self.editor.controls = [text(f"{t.name}  ·  {STYLES.get(t.style, t.style)}", 16, bold=True), params,
@@ -168,7 +168,7 @@ class TemplatesPage:
     def _generator(self):
         t = self.tpl
         miss = t.missing()
-        self.seed = ft.TextField(label="Semilla (opcional)", width=150, dense=True, text_size=12,
+        self.seed = tfield(label="Semilla (opcional)", width=150, dense=True, text_size=12,
                                  hint_text="vacío = aleatorio")
         self.song_label = text(os.path.basename(self.song_path) if self.song_path else "Ninguna canción elegida", 12, T.TEXT_DIM)
         return [text("Generar timeline", 14, bold=True),

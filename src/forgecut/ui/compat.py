@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
 from typing import Callable, List, Optional
 
 import os
@@ -66,23 +67,29 @@ def safe_update(*controls) -> None:
 
 
 def text(value: str = "", size: int = 12, color: str = T.TEXT, bold: bool = False, **kw) -> ft.Text:
-    return ft.Text(value, size=size, color=color,
+    return ft.Text(value, size=T.fs(size), color=color,
                    weight=ft.FontWeight.BOLD if bold else None, **kw)
 
 
 def icon_btn(icon_name: str, on_click=None, tooltip: str = "", size: int = 18, color: str = T.TEXT) -> ft.IconButton:
     icon = getattr(ft.Icons, icon_name, ft.Icons.CIRCLE)
-    return ft.IconButton(icon=icon, icon_size=size, icon_color=color, tooltip=tooltip, on_click=on_click)
+    size = T.sc(size)
+    try:                                                   # caja ajustada al icono (la de Material mide 40 px y desperdicia espacio)
+        return ft.IconButton(icon=icon, icon_size=size, icon_color=color, tooltip=tooltip, on_click=on_click,
+                             width=size + T.sc(12), height=size + T.sc(12), padding=0)
+    except TypeError:
+        return ft.IconButton(icon=icon, icon_size=size, icon_color=color, tooltip=tooltip, on_click=on_click)
 
 
 def btn(label: str, on_click=None, icon: Optional[str] = None, primary: bool = False, tooltip: str = "") -> ft.Control:
     """Botón de texto hecho con Container: no depende del nombre de clase de Flet (Button/ElevatedButton)."""
     row = []
     if icon:
-        row.append(ft.Icon(getattr(ft.Icons, icon, ft.Icons.CIRCLE), size=14, color="#ffffff" if primary else T.TEXT))
+        row.append(ft.Icon(getattr(ft.Icons, icon, ft.Icons.CIRCLE), size=T.sc(14), color="#ffffff" if primary else T.TEXT))
     row.append(text(label, 12, "#ffffff" if primary else T.TEXT))
-    return ft.Container(content=ft.Row(row, spacing=6, tight=True), on_click=on_click, tooltip=tooltip or None,
-                        bgcolor=T.ACCENT if primary else T.PANEL_3, padding=8, border_radius=4, ink=True)
+    return ft.Container(content=ft.Row(row, spacing=T.sc(6), tight=True), on_click=on_click, tooltip=tooltip or None,
+                        bgcolor=T.ACCENT if primary else T.PANEL_3, padding=T.sc(8) if T.SCALE >= 1 else T.sc(5),
+                        border_radius=4, ink=True)
 
 
 class Choice:
@@ -98,7 +105,7 @@ class Choice:
         self.control.controls = [ft.Container(
             content=text(label, 12, "#ffffff" if key == self.value else T.TEXT),
             bgcolor=T.ACCENT if key == self.value else T.PANEL_3, border_radius=4,
-            padding=8, on_click=lambda e, k=key: self.select(k)) for key, label in self.options]
+            padding=T.sc(8) if T.SCALE >= 1 else T.sc(5), on_click=lambda e, k=key: self.select(k)) for key, label in self.options]
 
     def select(self, key: str):
         self.value = key
@@ -316,7 +323,87 @@ def open_dialog(page: ft.Page, dlg: ft.AlertDialog) -> None:
         page.update()
 
 
+TEXT_FOCUS = [False]          # True mientras un campo de texto tiene el foco (los atajos de teclado se ignoran)
+
+
+def tfield(*a, on_focus=None, on_blur=None, on_submit=None, **kw) -> ft.TextField:
+    """TextField que avisa si tiene el foco: Supr/Retroceso/espacio… deben editar el texto, no el timeline."""
+    if "text_size" in kw:
+        kw["text_size"] = T.fs(kw["text_size"])
+
+    def _f(e):
+        TEXT_FOCUS[0] = True
+        if on_focus:
+            on_focus(e)
+
+    def _b(e):
+        TEXT_FOCUS[0] = False
+        if on_blur:
+            on_blur(e)
+    def _s(e):
+        TEXT_FOCUS[0] = False                  # al confirmar con Intro, V/B/M/Supr vuelven a ser atajos del editor
+        if on_submit:
+            on_submit(e)
+    return ft.TextField(*a, on_focus=_f, on_blur=_b, on_submit=_s, **kw)
+
+
+def _prefs_path() -> str:
+    return os.path.join(os.path.expanduser("~"), ".forgecut", "prefs.json")
+
+
+def load_prefs() -> dict:
+    import json
+    try:
+        with open(_prefs_path(), encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_prefs(**kw) -> None:
+    """Preferencias de la interfaz (último directorio, orden del explorador, escala…). Nunca debe romper la app."""
+    import json
+    try:
+        d = load_prefs()
+        d.update(kw)
+        os.makedirs(os.path.dirname(_prefs_path()), exist_ok=True)
+        with open(_prefs_path(), "w", encoding="utf-8") as f:
+            json.dump(d, f)
+    except Exception:
+        pass
+
+
+def detect_ui_scale() -> float:
+    """Escala según la pantalla: 1.0 (≥1000 px de alto lógico), 0.9, 0.8 (≤ 800 px, p. ej. 1366×768 o 1280×720).
+    Prioridad: variable FORGECUT_UI_SCALE > preferencia guardada (0 = automática) > pantalla detectada."""
+    for v in (os.environ.get("FORGECUT_UI_SCALE"), load_prefs().get("ui_scale")):
+        try:
+            if v:
+                return max(0.6, min(1.5, float(v)))
+        except (TypeError, ValueError):
+            pass
+    h = 0.0
+    try:
+        import sys
+        if sys.platform == "win32":
+            import ctypes
+            u = ctypes.windll.user32
+            h = float(u.GetSystemMetrics(1))
+            if u.IsProcessDPIAware():                       # medidas físicas → píxeles lógicos de Flutter
+                h /= max(1.0, u.GetDpiForSystem() / 96.0)
+        else:
+            import tkinter
+            r = tkinter.Tk()
+            h = float(r.winfo_screenheight())
+            r.destroy()
+    except Exception:
+        h = 0.0
+    return 1.0 if h <= 0 or h >= 1000 else (0.9 if h > 800 else 0.8)
+
+
 def close_dialog(page: ft.Page, dlg: ft.AlertDialog) -> None:
+    TEXT_FOCUS[0] = False
     try:
         if hasattr(page, "pop_dialog"):
             page.pop_dialog()
@@ -332,7 +419,7 @@ def close_dialog(page: ft.Page, dlg: ft.AlertDialog) -> None:
 async def ask_text(page: ft.Page, title: str, hint: str = "", initial: str = "") -> Optional[str]:
     """Diálogo de una línea (también sirve de plan B si el selector de archivos no está disponible)."""
     fut: asyncio.Future = asyncio.get_running_loop().create_future()
-    field = ft.TextField(value=initial, hint_text=hint, autofocus=True, width=420)
+    field = tfield(value=initial, hint_text=hint, autofocus=True, width=420)
 
     def done(val):
         close_dialog(page, dlg)
@@ -418,8 +505,8 @@ def unique_file(path: str) -> str:
     return path
 
 
-def _start_dir(initial: Optional[str] = None) -> str:
-    for c in (initial, "/kaggle/working", os.path.expanduser("~"), "/"):
+def _start_dir(initial: Optional[str] = None, last: Optional[str] = None) -> str:
+    for c in (initial, last, "/kaggle/working", os.path.expanduser("~"), "/"):
         if c and os.path.isdir(c):
             return c
     return "/"
@@ -429,11 +516,13 @@ async def browse(page: ft.Page, mode: str, title: str, exts: Optional[List[str]]
                  initial: Optional[str] = None, filename: str = ""):
     """mode: «files» | «dir» | «save». Devuelve lista (files), str (dir/save) o None/[] si se cancela."""
     exts = [x.lstrip(".").lower() for x in (exts or [])]
-    st = {"cwd": _start_dir(initial if (initial and os.path.isdir(initial)) else (os.path.dirname(initial) if initial else None)),
-          "sel": []}
+    pf = load_prefs()
+    st = {"cwd": _start_dir(initial if (initial and os.path.isdir(initial)) else (os.path.dirname(initial) if initial else None),
+                            pf.get("last_dir_" + mode) or pf.get("last_dir")),
+          "sel": [], "sort": pf.get("browse_sort", "name"), "desc": bool(pf.get("browse_desc", False))}
     fut = asyncio.get_running_loop().create_future()
-    path_f = ft.TextField(dense=True, text_size=12, expand=True)
-    name_f = ft.TextField(value=filename, dense=True, text_size=12, label="Nombre de archivo", visible=mode == "save")
+    path_f = tfield(dense=True, text_size=12, expand=True)
+    name_f = tfield(value=filename, dense=True, text_size=12, label="Nombre de archivo", visible=mode == "save")
     lst = ft.ListView(expand=True, spacing=0)
     info = ft.Text("", size=11, color=T.TEXT_DIM)
 
@@ -442,10 +531,20 @@ async def browse(page: ft.Page, mode: str, title: str, exts: Optional[List[str]]
         path_f.value = d
         rows = []
         try:
-            names = sorted(os.listdir(d), key=lambda n: n.lower())
+            names = os.listdir(d)
         except OSError as ex:
             names = []
             info.value = f"No se puede abrir: {ex}"
+        meta = {}
+        for n in names:
+            try:
+                x = os.stat(os.path.join(d, n))
+                meta[n] = (x.st_mtime, getattr(x, "st_birthtime", None) or x.st_ctime, x.st_size)
+            except OSError:
+                meta[n] = (0.0, 0.0, 0)
+        skey = {"modified": lambda n: meta[n][0], "created": lambda n: meta[n][1], "size": lambda n: meta[n][2],
+                "type": lambda n: (n.rsplit(".", 1)[-1].lower() if "." in n else "", n.lower())}.get(st["sort"], lambda n: n.lower())
+        names = sorted(names, key=skey, reverse=st["desc"])
         dirs = [n for n in names if os.path.isdir(os.path.join(d, n)) and not n.startswith(".")]
         files = [] if mode == "dir" else [n for n in names if os.path.isfile(os.path.join(d, n)) and not n.startswith(".")
                                           and (not exts or n.rsplit(".", 1)[-1].lower() in exts)]
@@ -453,10 +552,14 @@ async def browse(page: ft.Page, mode: str, title: str, exts: Optional[List[str]]
         def row(n, is_dir):
             full = os.path.join(d, n)
             on = full in st["sel"]
+            when = time.strftime("%d/%m/%y %H:%M", time.localtime(meta[n][1 if st["sort"] == "created" else 0])) if meta[n][0] else ""
+            size = "" if is_dir else f"{meta[n][2] / 1048576:.1f} MB" if meta[n][2] >= 1048576 else f"{meta[n][2] / 1024:.0f} KB"
             return ft.Container(
                 content=ft.Row([ft.Icon(ft.Icons.FOLDER if is_dir else ft.Icons.INSERT_DRIVE_FILE_OUTLINED, size=16,
-                                        color=T.ACCENT if is_dir else T.TEXT_DIM), ft.Text(n, size=12, expand=True)], spacing=6),
-                padding=6, bgcolor=T.PANEL_2 if on else None,
+                                        color=T.ACCENT if is_dir else T.TEXT_DIM), ft.Text(n, size=12, expand=True, no_wrap=True),
+                                ft.Text(size, size=10, color=T.TEXT_DIM, width=64, text_align=ft.TextAlign.RIGHT),
+                                ft.Text(when, size=10, color=T.TEXT_DIM, width=96)], spacing=6),
+                padding=4, bgcolor=T.PANEL_2 if on else None,
                 on_click=(lambda e, p=full: go(p)) if is_dir else (lambda e, p=full, n=n: pick(p, n)))
         rows = [row(n, True) for n in dirs] + [row(n, False) for n in files]
         lst.controls = rows or [ft.Text("(vacío)", size=12, color=T.TEXT_DIM)]
@@ -493,9 +596,23 @@ async def browse(page: ft.Page, mode: str, title: str, exts: Optional[List[str]]
             refresh()
 
     def done(val):
+        if val:
+            save_prefs(**{"last_dir_" + mode: st["cwd"], "last_dir": st["cwd"]})     # recuerda el último directorio usado
         if not fut.done():
             fut.set_result(val)
         close_dialog(page, dlg)
+
+    def set_sort(k):
+        st["sort"] = k
+        save_prefs(browse_sort=k)
+        refresh()
+
+    def flip(e=None):
+        st["desc"] = not st["desc"]
+        save_prefs(browse_desc=st["desc"])
+        flip_b.icon = ft.Icons.ARROW_DOWNWARD if st["desc"] else ft.Icons.ARROW_UPWARD
+        refresh()
+        safe_update(flip_b)
 
     def ok(e):
         if mode == "dir":
@@ -508,11 +625,16 @@ async def browse(page: ft.Page, mode: str, title: str, exts: Optional[List[str]]
             done(list(st["sel"]))
 
     path_f.on_submit = goto
-    quick = [("/kaggle/working", "working"), ("/kaggle/input", "input"), (os.path.expanduser("~"), "Inicio"), ("/", "/")]
+    flip_b = ft.IconButton(ft.Icons.ARROW_DOWNWARD if st["desc"] else ft.Icons.ARROW_UPWARD, on_click=flip, icon_size=16,
+                           tooltip="Ascendente / descendente")
+    sorter = Choice([("name", "Nombre"), ("modified", "Modificación"), ("created", "Creación"), ("size", "Tamaño"), ("type", "Tipo")],
+                    st["sort"], on_change=set_sort)
+    quick = [(pf.get("last_dir") or "", "Último"), ("/kaggle/working", "working"), ("/kaggle/input", "input"), (os.path.expanduser("~"), "Inicio"), ("/", "/")]
     chips = [ft.TextButton(lbl, on_click=lambda e, p=p: go(p)) for p, lbl in quick if os.path.isdir(p)]
     body = ft.Column([ft.Row([ft.IconButton(ft.Icons.ARROW_UPWARD, on_click=up, tooltip="Subir"), path_f,
                               ft.IconButton(ft.Icons.ARROW_FORWARD, on_click=goto, tooltip="Ir")], spacing=2),
                       ft.Row(chips, spacing=0, wrap=True),
+                      ft.Row([text("Ordenar:", 11, T.TEXT_DIM), sorter.control, flip_b], spacing=4, wrap=True),
                       ft.Container(content=lst, expand=True, bgcolor=T.PANEL), info, name_f],
                      spacing=4, width=560, height=460)
     ok_lbl = {"dir": "Usar esta carpeta", "save": "Guardar", "files": "Abrir"}[mode]

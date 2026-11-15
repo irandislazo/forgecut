@@ -66,7 +66,8 @@ class AppState:
         self.pool_multi = False               # botón «Seleccionar»: cada toque suma/quita (táctil / sin Ctrl)
         self.pool_query = ""                  # filtro por nombre (busca en TODAS las carpetas)
         self.pool_view = "list"               # list | grid
-        self.pool_sort = "name"               # name | duration | kind | added
+        self.pool_sort = "name"               # name | duration | kind | added | created | modified
+        self.pool_desc = None                 # None = sentido por defecto del criterio; True/False = elegido en «Ordenar»
         self.drag_assets: List[str] = []      # selección que se está arrastrando desde el Media Pool
         self.drag_bins: List[str] = []
         self._shift_at = 0.0
@@ -184,6 +185,7 @@ class AppState:
             a = self.project.add_asset(MediaAsset(
                 id=mid, path=p, kind=info["kind"], name=info["name"], duration_s=info["duration_s"],
                 width=info["width"], height=info["height"], fps=info["fps"], has_audio=info["has_audio"]))
+            self.asset_dates(a)
             if bin_id in self.project.bins and a.id == mid:       # solo los medios NUEVOS entran en la carpeta abierta
                 a.bin_id = bin_id
             out.append(a)
@@ -439,9 +441,26 @@ class AppState:
             (sum(1 for b in self.project.bins.values() if b.parent in ids) if not recursive else 0)
 
     def _sorted_assets(self, assets: List[MediaAsset]) -> List[MediaAsset]:
-        key = {"duration": lambda a: -(a.duration_s or 0), "kind": lambda a: (a.kind or "", (a.name or "").lower()),
-               "added": lambda a: list(self.project.assets).index(a.id)}.get(self.pool_sort, lambda a: (a.name or "").lower())
-        return sorted(assets, key=key)
+        order = {i: n for n, i in enumerate(self.project.assets)}
+        key = {"duration": lambda a: a.duration_s or 0, "kind": lambda a: (a.kind or "", (a.name or "").lower()),
+               "added": lambda a: order.get(a.id, 0), "created": lambda a: self.asset_dates(a)[0],
+               "modified": lambda a: self.asset_dates(a)[1]}.get(self.pool_sort, lambda a: (a.name or "").lower())
+        return sorted(assets, key=key, reverse=self.pool_is_desc())
+
+    def pool_is_desc(self) -> bool:
+        """Sentido efectivo: por defecto fechas y duración van de mayor/más reciente a menor."""
+        return self.pool_sort in ("duration", "created", "modified") if self.pool_desc is None else bool(self.pool_desc)
+
+    def asset_dates(self, a: MediaAsset):
+        """(creación, modificación) del archivo; los proyectos antiguos las leen la primera vez que hacen falta."""
+        if not a.modified or not a.created:
+            try:
+                st = os.stat(a.path)
+                a.modified = st.st_mtime
+                a.created = getattr(st, "st_birthtime", None) or st.st_ctime
+            except OSError:
+                pass
+        return a.created, a.modified
 
     def pool_items(self, cur: Optional[str]):
         """(carpetas, medios) a mostrar. Sin búsqueda: contenido de `cur`. Con búsqueda: coincidencias en TODO el pool."""

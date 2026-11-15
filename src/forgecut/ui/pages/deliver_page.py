@@ -8,7 +8,7 @@ import time
 import flet as ft
 
 from .. import theme as T
-from ..compat import Choice, ask_text, btn, close_dialog, open_dialog, pick_dir, pick_save, safe_update, text, toast, writable_dir, android_public_dirs, default_out_dir, unique_file
+from ..compat import Choice, tfield, ask_text, btn, close_dialog, open_dialog, pick_dir, pick_save, safe_update, text, toast, writable_dir, android_public_dirs, default_out_dir, unique_file
 
 
 # (clave, etiqueta, lado corto en px; None = tamaño original / borrador)
@@ -26,9 +26,9 @@ class DeliverPage:
         self.res = Choice([(k, lbl) for k, lbl, _ in PRESETS], "1080")
         self.crf = Choice(CRFS, "20")
         self.res_info = text("", 11, T.TEXT_DIM)
-        self.out_dir = ft.TextField(label="Carpeta de salida (audio)", dense=True, width=300, text_size=12,
+        self.out_dir = tfield(label="Carpeta de salida (audio)", dense=True, width=300, text_size=12,
                                     value=default_out_dir("audio", state.data_dir))
-        self.render_dir = ft.TextField(label="Carpeta de salida (vídeo)", dense=True, width=300, text_size=12,
+        self.render_dir = tfield(label="Carpeta de salida (vídeo)", dense=True, width=300, text_size=12,
                                        value=default_out_dir("render", state.data_dir))
         self.info = text("", 12, T.TEXT_DIM)
         self.audio_msg = text("", 12, T.TEXT_DIM)
