@@ -24,7 +24,8 @@ jobs:
       - if: steps.cache.outputs.cache-hit != 'true'
         run: |
           sudo apt-get update && sudo apt-get install -y nasm pkg-config make
-          sed -i 's/ --enable-pie//' scripts/android/build_ffmpeg.sh
+          sed -i 's/--enable-pie//g' scripts/android/build_ffmpeg.sh
+          echo "enable-pie restantes: $(grep -c -- '--enable-pie' scripts/android/build_ffmpeg.sh || true)"
           bash scripts/android/build_ffmpeg.sh
       - uses: actions/upload-artifact@v4
         with: { name: libffmpeg-arm64, path: out/libffmpeg.so }
